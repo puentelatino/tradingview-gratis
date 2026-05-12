@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { NumericInput } from "@/components/ui/numeric-input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   useChartStore,
@@ -205,16 +206,13 @@ function NumberField({
       <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
         {label}
       </span>
-      <Input
-        type="number"
+      <NumericInput
+        value={value}
+        onCommit={onChange}
         min={min}
         max={max}
-        value={value}
-        onChange={(e) => {
-          const n = parseFloat(e.target.value);
-          if (!isNaN(n)) onChange(n);
-        }}
-        className="bg-tv-bg tabular-nums"
+        ariaLabel={label}
+        className="bg-tv-bg"
       />
     </label>
   );

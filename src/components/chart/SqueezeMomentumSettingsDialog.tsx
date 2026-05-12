@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { NumericInput } from "@/components/ui/numeric-input";
 import {
   useChartStore,
   DEFAULT_SQUEEZE_MOMENTUM_CONFIG,
@@ -183,20 +184,20 @@ function NumberField({
   onChange: (n: number) => void;
   step: number;
 }) {
+  // step >= 1 ⇒ tratamos como entero (BB Length, KC Length). step < 1 ⇒ decimal.
+  const integer = step >= 1;
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
         {label}
       </span>
-      <Input
-        type="number"
-        step={step}
+      <NumericInput
         value={value}
-        onChange={(e) => {
-          const n = parseFloat(e.target.value);
-          if (!isNaN(n)) onChange(n);
-        }}
-        className="bg-tv-bg tabular-nums"
+        onCommit={onChange}
+        integer={integer}
+        step={step}
+        ariaLabel={label}
+        className="bg-tv-bg"
       />
     </label>
   );

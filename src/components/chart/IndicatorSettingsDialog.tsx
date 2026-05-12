@@ -7,8 +7,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { NumericInput } from "@/components/ui/numeric-input";
 import {
   useChartStore,
   DEFAULT_CONFIG,
@@ -184,16 +184,14 @@ function Field({
       <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
         {label}
       </span>
-      <Input
-        type="number"
+      <NumericInput
+        value={value}
+        onCommit={onChange}
         min={2}
         max={500}
-        value={value}
-        onChange={(e) => {
-          const n = parseInt(e.target.value, 10);
-          if (!isNaN(n)) onChange(n);
-        }}
-        className="bg-tv-bg tabular-nums"
+        integer
+        ariaLabel={label}
+        className="bg-tv-bg"
       />
     </label>
   );
