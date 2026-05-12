@@ -38,6 +38,11 @@ const ENTRIES: Entry[] = [
     group: "Osciladores",
     label: (c) => `MACD (${c.macdFast}, ${c.macdSlow}, ${c.macdSignal})`,
   },
+  {
+    key: "squeezeMomentum",
+    group: "Momento",
+    label: () => "Squeeze Momentum (LazyBear)",
+  },
 ];
 
 export function IndicatorMenu() {

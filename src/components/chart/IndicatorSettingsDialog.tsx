@@ -23,6 +23,7 @@ const TITLES: Record<IndicatorKey, string> = {
   macd: "MACD",
   volume: "Volumen",
   vrvp: "Volume Profile (VRVP)",
+  squeezeMomentum: "Squeeze Momentum (LazyBear)",
 };
 
 export function IndicatorSettingsDialog() {

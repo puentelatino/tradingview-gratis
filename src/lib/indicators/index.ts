@@ -116,6 +116,216 @@ export function macd(
   return out;
 }
 
+// ─── Squeeze Momentum (LazyBear, SQZMOM_LB) ──────────────────────────────────
+
+export type SqueezeState = "on" | "off" | "none";
+export type SqueezeHistColor = "lime" | "green" | "red" | "maroon";
+
+export interface SqueezeMomentumOptions {
+  bbLength: number;
+  bbMult: number;
+  kcLength: number;
+  kcMult: number;
+  useTrueRange: boolean;
+}
+
+export interface SqueezeMomentumPoint {
+  time: number;
+  val: number | null;
+  sqzState: SqueezeState | null;
+  histColor: SqueezeHistColor | null;
+}
+
+/**
+ * Desviación estándar poblacional sobre los `period` últimos closes.
+ * Coincide con `stdev()` de Pine Script (normaliza por N, no por N-1).
+ */
+function stdevPop(values: number[], period: number, endIdx: number): number {
+  let sum = 0;
+  for (let i = endIdx - period + 1; i <= endIdx; i++) sum += values[i];
+  const mean = sum / period;
+  let acc = 0;
+  for (let i = endIdx - period + 1; i <= endIdx; i++) {
+    const d = values[i] - mean;
+    acc += d * d;
+  }
+  return Math.sqrt(acc / period);
+}
+
+/** True Range de la vela i (necesita la vela previa para gap-aware) */
+function trueRangeAt(candles: Candle[], i: number): number {
+  const c = candles[i];
+  if (i === 0) return c.high - c.low;
+  const prevClose = candles[i - 1].close;
+  return Math.max(
+    c.high - c.low,
+    Math.abs(c.high - prevClose),
+    Math.abs(c.low - prevClose),
+  );
+}
+
+/**
+ * Regresión lineal por mínimos cuadrados sobre `period` puntos terminando en
+ * `endIdx`. Devuelve el valor previsto en el último punto (offset 0), tal como
+ * `linreg(source, length, 0)` de Pine Script.
+ *
+ * Modelo: y = a + b*x donde x = 0..period-1 (x más reciente = period-1).
+ * Pendiente b = (period*Σxy − Σx*Σy) / (period*Σx² − (Σx)²)
+ * Intercepto a = (Σy − b*Σx) / period
+ * Predicción en x = period-1 → a + b*(period-1).
+ */
+function linregLast(values: number[], period: number, endIdx: number): number {
+  const n = period;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let k = 0; k < n; k++) {
+    const x = k;
+    const y = values[endIdx - (n - 1) + k];
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const denom = n * sumXX - sumX * sumX;
+  const slope = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  return intercept + slope * (n - 1);
+}
+
+/**
+ * Squeeze Momentum Indicator (LazyBear) — replica del script original.
+ *
+ * Combina Bollinger Bands y Keltner Channels para detectar squeezes
+ * (compresiones de volatilidad) y una regresión lineal sobre la distancia del
+ * precio al midpoint del rango para estimar el momentum.
+ *
+ * Por cada vela devuelve:
+ *  - val:       valor del histograma (linreg del momentum). null si no hay
+ *               histórico suficiente.
+ *  - sqzState:  'on' (BB dentro de KC, mercado comprimido),
+ *               'off' (BB fuera de KC, expansión activa),
+ *               'none' (estado neutral). null si aún no hay datos.
+ *  - histColor: lime/green/red/maroon según signo de val y si crece o decrece
+ *               respecto al punto previo.
+ */
+export function calculateSqueezeMomentum(
+  candles: Candle[],
+  options: SqueezeMomentumOptions,
+): SqueezeMomentumPoint[] {
+  const n = candles.length;
+  const out: SqueezeMomentumPoint[] = new Array(n);
+  if (n === 0) return out;
+
+  const { bbLength, bbMult, kcLength, kcMult, useTrueRange } = options;
+
+  // Precomputamos arrays de close, high, low y range para acceso O(1)
+  const closes = new Array<number>(n);
+  const highs = new Array<number>(n);
+  const lows = new Array<number>(n);
+  const ranges = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    closes[i] = candles[i].close;
+    highs[i] = candles[i].high;
+    lows[i] = candles[i].low;
+    ranges[i] = useTrueRange ? trueRangeAt(candles, i) : candles[i].high - candles[i].low;
+  }
+
+  // Para linreg necesitamos la serie "source - avg(avg(hh, ll), sma)" en cada
+  // punto de la ventana de kcLength. La construimos progresivamente.
+  const momentumSrc = new Array<number>(n);
+
+  // SMAs incrementales: mantenemos sumas móviles
+  let sumCloseBB = 0; // sum de closes en ventana bbLength
+  let sumCloseKC = 0; // sum de closes en ventana kcLength
+  let sumRangeKC = 0; // sum de range en ventana kcLength
+
+  // Para highest(high, kcLength) y lowest(low, kcLength) usamos un escaneo
+  // lineal sobre la ventana — es O(kcLength) por vela pero kcLength es pequeño
+  // (típico 20) y mantiene el código simple sin estructuras deque.
+
+  for (let i = 0; i < n; i++) {
+    sumCloseBB += closes[i];
+    if (i >= bbLength) sumCloseBB -= closes[i - bbLength];
+
+    sumCloseKC += closes[i];
+    if (i >= kcLength) sumCloseKC -= closes[i - kcLength];
+
+    sumRangeKC += ranges[i];
+    if (i >= kcLength) sumRangeKC -= ranges[i - kcLength];
+
+    const time = candles[i].time;
+
+    // ¿Hay suficiente histórico para BB y KC?
+    const hasBB = i >= bbLength - 1;
+    const hasKC = i >= kcLength - 1;
+
+    if (!hasBB || !hasKC) {
+      out[i] = { time, val: null, sqzState: null, histColor: null };
+      continue;
+    }
+
+    // Bandas de Bollinger (OJO: el script original usa multKC en la dev de BB,
+    // no bbMult. Replicamos esa peculiaridad — `dev = multKC * stdev(...)`)
+    const basis = sumCloseBB / bbLength;
+    const dev = kcMult * stdevPop(closes, bbLength, i);
+    void bbMult;
+    const upperBB = basis + dev;
+    const lowerBB = basis - dev;
+
+    // Keltner Channels
+    const ma = sumCloseKC / kcLength;
+    const rangema = sumRangeKC / kcLength;
+    const upperKC = ma + rangema * kcMult;
+    const lowerKC = ma - rangema * kcMult;
+
+    const sqzOn = lowerBB > lowerKC && upperBB < upperKC;
+    const sqzOff = lowerBB < lowerKC && upperBB > upperKC;
+    const sqzState: SqueezeState = sqzOn ? "on" : sqzOff ? "off" : "none";
+
+    // highest(high, kcLength) y lowest(low, kcLength) sobre la ventana cerrada
+    let hh = -Infinity;
+    let ll = Infinity;
+    for (let k = i - kcLength + 1; k <= i; k++) {
+      if (highs[k] > hh) hh = highs[k];
+      if (lows[k] < ll) ll = lows[k];
+    }
+    const mid = (hh + ll) / 2;
+    const avgMidSma = (mid + ma) / 2;
+    momentumSrc[i] = closes[i] - avgMidSma;
+
+    // Necesitamos kcLength puntos de momentumSrc para el linreg
+    if (i < kcLength - 1 + (kcLength - 1)) {
+      // Aún no hay kcLength valores válidos en momentumSrc; el primer punto
+      // válido de momentumSrc está en i = kcLength-1, así que necesitamos
+      // i >= 2*(kcLength-1) para tener una ventana completa.
+    }
+    const linregStart = i - kcLength + 1;
+    if (linregStart < kcLength - 1) {
+      // Faltan puntos de momentumSrc completos en la ventana de linreg
+      out[i] = { time, val: null, sqzState, histColor: null };
+      continue;
+    }
+
+    const val = linregLast(momentumSrc, kcLength, i);
+
+    // Color del histograma según signo + tendencia respecto al punto previo
+    const prev = out[i - 1];
+    const prevVal = prev && prev.val !== null ? prev.val : 0;
+    let histColor: SqueezeHistColor;
+    if (val > 0) {
+      histColor = val > prevVal ? "lime" : "green";
+    } else {
+      histColor = val < prevVal ? "red" : "maroon";
+    }
+
+    out[i] = { time, val, sqzState, histColor };
+  }
+
+  return out;
+}
+
 // ─── Volume Profile (VRVP) ───────────────────────────────────────────────────
 
 export interface VolumeProfileRow {

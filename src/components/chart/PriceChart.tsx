@@ -14,7 +14,7 @@ import {
 } from "lightweight-charts";
 import { fetchKlines } from "@/lib/binance/rest";
 import { getBinanceWS } from "@/lib/binance/ws";
-import { ema, rsi, macd } from "@/lib/indicators";
+import { ema, rsi, macd, calculateSqueezeMomentum } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
   INDICATOR_COLORS,
@@ -26,6 +26,7 @@ import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
 import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 import { VolumeProfileSettingsDialog } from "./VolumeProfileSettingsDialog";
+import { SqueezeMomentumSettingsDialog } from "./SqueezeMomentumSettingsDialog";
 
 interface MeasurePoint {
   time: number;
@@ -86,6 +87,8 @@ interface LastValues {
   macdSignal?: number;
   macdHist?: number;
   volume?: number;
+  squeezeVal?: number;
+  squeezeState?: "on" | "off" | "none";
 }
 
 interface PaneOffset {
@@ -107,6 +110,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const sqzHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const sqzDotNoneRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const sqzDotOnRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const sqzDotOffRef = useRef<ISeriesApi<"Line"> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
 
@@ -114,7 +121,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const hidden = useChartStore((s) => s.hidden);
   const config = useChartStore((s) => s.config);
   const vrvpConfig = useChartStore((s) => s.vrvpConfig);
+  const sqzConfig = useChartStore((s) => s.squeezeMomentumConfig);
   const [vrvpDialogOpen, setVrvpDialogOpen] = useState(false);
+  const [sqzDialogOpen, setSqzDialogOpen] = useState(false);
+  const sqzConfigRef = useRef(sqzConfig);
+  sqzConfigRef.current = sqzConfig;
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -332,6 +343,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
       macdRef.current = null;
       macdSignalRef.current = null;
       macdHistRef.current = null;
+      sqzHistRef.current = null;
+      sqzDotNoneRef.current = null;
+      sqzDotOnRef.current = null;
+      sqzDotOffRef.current = null;
     };
   }, []);
 
@@ -472,6 +487,65 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.macd, indicators.rsi]);
 
+  // Squeeze Momentum pane — se coloca tras RSI y MACD si están activos
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.squeezeMomentum && !sqzHistRef.current) {
+      // Cálculo dinámico del paneIndex: 1 + cuántos osciladores anteriores hay
+      let paneIndex = 1;
+      if (indicators.rsi) paneIndex += 1;
+      if (indicators.macd) paneIndex += 1;
+
+      // Histograma con color por punto
+      const hist = chartRef.current.addSeries(
+        HistogramSeries,
+        { priceLineVisible: false, lastValueVisible: false, base: 0 },
+        paneIndex,
+      );
+      // Tres LineSeries (una por estado de squeeze) — sólo dibujan puntos
+      const mkDot = (color: string) =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color,
+            lineWidth: 1,
+            lineVisible: false,
+            pointMarkersVisible: true,
+            pointMarkersRadius: 3,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+      const cfg = sqzConfigRef.current;
+      const dotNone = mkDot(cfg.sqzNone);
+      const dotOn = mkDot(cfg.sqzOn);
+      const dotOff = mkDot(cfg.sqzOff);
+
+      sqzHistRef.current = hist;
+      sqzDotNoneRef.current = dotNone;
+      sqzDotOnRef.current = dotOn;
+      sqzDotOffRef.current = dotOff;
+
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateSqueezeMomentum();
+    } else if (!indicators.squeezeMomentum && sqzHistRef.current && chartRef.current) {
+      chartRef.current.removeSeries(sqzHistRef.current);
+      if (sqzDotNoneRef.current) chartRef.current.removeSeries(sqzDotNoneRef.current);
+      if (sqzDotOnRef.current) chartRef.current.removeSeries(sqzDotOnRef.current);
+      if (sqzDotOffRef.current) chartRef.current.removeSeries(sqzDotOffRef.current);
+      sqzHistRef.current = null;
+      sqzDotNoneRef.current = null;
+      sqzDotOnRef.current = null;
+      sqzDotOffRef.current = null;
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indicators.squeezeMomentum, indicators.rsi, indicators.macd]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -485,6 +559,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (macdSignalRef.current) macdSignalRef.current.applyOptions({ visible: v("macd") });
     if (macdHistRef.current) macdHistRef.current.applyOptions({ visible: v("macd") });
     if (volumeSeriesRef.current) volumeSeriesRef.current.applyOptions({ visible: v("volume") });
+    if (sqzHistRef.current) sqzHistRef.current.applyOptions({ visible: v("squeezeMomentum") });
+    if (sqzDotNoneRef.current) sqzDotNoneRef.current.applyOptions({ visible: v("squeezeMomentum") });
+    if (sqzDotOnRef.current) sqzDotOnRef.current.applyOptions({ visible: v("squeezeMomentum") });
+    if (sqzDotOffRef.current) sqzDotOffRef.current.applyOptions({ visible: v("squeezeMomentum") });
   }, [indicators, hidden]);
 
   // Recompute indicators when config changes (periods)
@@ -499,6 +577,28 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     updateMACD();
   }, [config.macdFast, config.macdSlow, config.macdSignal]);
+
+  // Recolorea las series de squeeze y recalcula al cambiar params
+  useEffect(() => {
+    sqzDotNoneRef.current?.applyOptions({ color: sqzConfig.sqzNone });
+    sqzDotOnRef.current?.applyOptions({ color: sqzConfig.sqzOn });
+    sqzDotOffRef.current?.applyOptions({ color: sqzConfig.sqzOff });
+    updateSqueezeMomentum();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sqzConfig.bbLength,
+    sqzConfig.bbMult,
+    sqzConfig.kcLength,
+    sqzConfig.kcMult,
+    sqzConfig.useTrueRange,
+    sqzConfig.histUp1,
+    sqzConfig.histUp2,
+    sqzConfig.histDown1,
+    sqzConfig.histDown2,
+    sqzConfig.sqzNone,
+    sqzConfig.sqzOn,
+    sqzConfig.sqzOff,
+  ]);
 
   // Sync price lines from store to the candle series
   useEffect(() => {
@@ -628,6 +728,61 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }));
   }
 
+  function updateSqueezeMomentum() {
+    const c = candlesRef.current;
+    const hist = sqzHistRef.current;
+    if (c.length === 0 || !hist) return;
+    const cfg = sqzConfigRef.current;
+    const points = calculateSqueezeMomentum(c, {
+      bbLength: cfg.bbLength,
+      bbMult: cfg.bbMult,
+      kcLength: cfg.kcLength,
+      kcMult: cfg.kcMult,
+      useTrueRange: cfg.useTrueRange,
+    });
+
+    // Mapeo color del histograma según lo que devuelve el indicador
+    const colorMap: Record<string, string> = {
+      lime: cfg.histUp1,
+      green: cfg.histUp2,
+      red: cfg.histDown1,
+      maroon: cfg.histDown2,
+    };
+
+    // Histograma — sólo puntos con val no nulo
+    const histData = points
+      .filter((p) => p.val !== null)
+      .map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: p.val as number,
+        color: p.histColor ? colorMap[p.histColor] : cfg.histUp2,
+      }));
+    hist.setData(histData);
+
+    // Tres series de puntos: una por estado. Las velas en otro estado se omiten
+    // (la serie sólo recibe los puntos que le corresponden).
+    const dotNone: { time: UTCTimestamp; value: number }[] = [];
+    const dotOn: { time: UTCTimestamp; value: number }[] = [];
+    const dotOff: { time: UTCTimestamp; value: number }[] = [];
+    for (const p of points) {
+      if (p.sqzState === null) continue;
+      const entry = { time: p.time as UTCTimestamp, value: 0 };
+      if (p.sqzState === "none") dotNone.push(entry);
+      else if (p.sqzState === "on") dotOn.push(entry);
+      else dotOff.push(entry);
+    }
+    sqzDotNoneRef.current?.setData(dotNone);
+    sqzDotOnRef.current?.setData(dotOn);
+    sqzDotOffRef.current?.setData(dotOff);
+
+    const last = points.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      squeezeVal: last?.val ?? undefined,
+      squeezeState: last?.sqzState ?? undefined,
+    }));
+  }
+
   // Load historical data + subscribe live
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -661,6 +816,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateEMAs();
         updateRSI();
         updateMACD();
+        updateSqueezeMomentum();
         chartRef.current?.timeScale().fitContent();
         requestAnimationFrame(() => recomputePaneOffsets());
 
@@ -706,6 +862,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
             updateEMAs();
             updateRSI();
             updateMACD();
+            updateSqueezeMomentum();
             const prev = arr[arr.length - 2] ?? lastCandle;
             setLastPrice({
               value: k.close,
@@ -737,6 +894,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // Determine which pane each indicator lives in (based on current layout)
   const rsiPaneIdx = 1;
   const macdPaneIdx = indicators.rsi ? 2 : 1;
+  const sqzPaneIdx =
+    1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -962,6 +1121,33 @@ export function PriceChart({ symbol, timeframe }: Props) {
           />
         </div>
       )}
+
+      {/* Squeeze Momentum pane label */}
+      {indicators.squeezeMomentum && paneOffsets[sqzPaneIdx] && (
+        <div
+          style={{ top: paneOffsets[sqzPaneIdx].top + 6, left: 12 }}
+          className="pointer-events-none absolute z-10"
+        >
+          <IndicatorPill
+            name={`SQZMOM ${sqzConfig.bbLength}, ${sqzConfig.kcLength}`}
+            value={
+              lastValues.squeezeVal !== undefined
+                ? `${lastValues.squeezeVal.toFixed(2)} · ${lastValues.squeezeState ?? "—"}`
+                : undefined
+            }
+            color={INDICATOR_COLORS.squeezeMomentum}
+            hidden={hidden.squeezeMomentum}
+            onToggleHide={() => toggleHidden("squeezeMomentum")}
+            onSettings={() => setSqzDialogOpen(true)}
+            onRemove={() => removeIndicator("squeezeMomentum")}
+          />
+        </div>
+      )}
+
+      <SqueezeMomentumSettingsDialog
+        open={sqzDialogOpen}
+        onOpenChange={setSqzDialogOpen}
+      />
     </div>
   );
 }

@@ -11,7 +11,38 @@ export type IndicatorKey =
   | "rsi"
   | "macd"
   | "volume"
-  | "vrvp";
+  | "vrvp"
+  | "squeezeMomentum";
+
+export interface SqueezeMomentumConfig {
+  bbLength: number;
+  bbMult: number;
+  kcLength: number;
+  kcMult: number;
+  useTrueRange: boolean;
+  histUp1: string;
+  histUp2: string;
+  histDown1: string;
+  histDown2: string;
+  sqzNone: string;
+  sqzOn: string;
+  sqzOff: string;
+}
+
+export const DEFAULT_SQUEEZE_MOMENTUM_CONFIG: SqueezeMomentumConfig = {
+  bbLength: 20,
+  bbMult: 2.0,
+  kcLength: 20,
+  kcMult: 1.5,
+  useTrueRange: true,
+  histUp1: "#00FF00",
+  histUp2: "#008000",
+  histDown1: "#FF0000",
+  histDown2: "#800000",
+  sqzNone: "#2196F3",
+  sqzOn: "#000000",
+  sqzOff: "#808080",
+};
 
 export type VrvpPlacement = "left" | "right";
 
@@ -81,6 +112,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   macd: "#2962ff",
   volume: "#787b86",
   vrvp: "#26a69a",
+  squeezeMomentum: "#2196f3",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -106,6 +138,7 @@ interface ChartState {
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
   vrvpConfig: VrvpConfig;
+  squeezeMomentumConfig: SqueezeMomentumConfig;
   watchlist: string[];
 
   // Ephemeral UI state (not persisted)
@@ -124,6 +157,8 @@ interface ChartState {
   setConfig: (patch: Partial<IndicatorConfig>) => void;
   setVrvpConfig: (patch: Partial<VrvpConfig>) => void;
   resetVrvpConfig: () => void;
+  setSqueezeMomentumConfig: (patch: Partial<SqueezeMomentumConfig>) => void;
+  resetSqueezeMomentumConfig: () => void;
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
@@ -146,6 +181,7 @@ export const useChartStore = create<ChartState>()(
         macd: false,
         volume: true,
         vrvp: false,
+        squeezeMomentum: false,
       },
       hidden: {
         ema20: false,
@@ -155,9 +191,11 @@ export const useChartStore = create<ChartState>()(
         macd: false,
         volume: false,
         vrvp: false,
+        squeezeMomentum: false,
       },
       config: { ...DEFAULT_CONFIG },
       vrvpConfig: { ...DEFAULT_VRVP_CONFIG },
+      squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
       tool: "cursor",
       priceLines: [],
@@ -186,6 +224,10 @@ export const useChartStore = create<ChartState>()(
       setVrvpConfig: (patch) =>
         set((s) => ({ vrvpConfig: { ...s.vrvpConfig, ...patch } })),
       resetVrvpConfig: () => set({ vrvpConfig: { ...DEFAULT_VRVP_CONFIG } }),
+      setSqueezeMomentumConfig: (patch) =>
+        set((s) => ({ squeezeMomentumConfig: { ...s.squeezeMomentumConfig, ...patch } })),
+      resetSqueezeMomentumConfig: () =>
+        set({ squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG } }),
       addToWatchlist: (s) =>
         set((state) => ({
           watchlist: state.watchlist.includes(s)
@@ -229,6 +271,7 @@ export const useChartStore = create<ChartState>()(
         hidden: s.hidden,
         config: s.config,
         vrvpConfig: s.vrvpConfig,
+        squeezeMomentumConfig: s.squeezeMomentumConfig,
         watchlist: s.watchlist,
       }),
     },
