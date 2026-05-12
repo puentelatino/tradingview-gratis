@@ -106,10 +106,27 @@ export function VolumeProfileOverlay({
     if (!profile) return;
 
     // 3. Geometría del recuadro
-    const boxWidth = Math.max(20, (cssWidth * cfg.widthPercent) / 100);
-    const boxX = cfg.placement === "right" ? cssWidth - boxWidth : 0;
-    // El histograma se "dibuja" desde el lado externo (eje de precio) hacia el centro
-    const baseX = cfg.placement === "right" ? cssWidth : 0;
+    // Restamos el ancho del eje de precio del lado donde se coloca el histograma
+    // para que el recuadro NO tape las etiquetas numéricas del eje. Las líneas
+    // POC/VAH/VAL sí siguen ocupando todo el ancho visible más abajo.
+    let rightAxisW = 0;
+    let leftAxisW = 0;
+    try {
+      rightAxisW = c.priceScale("right").width();
+    } catch {}
+    try {
+      leftAxisW = c.priceScale("left").width();
+    } catch {}
+
+    const chartAreaLeft = leftAxisW;
+    const chartAreaRight = cssWidth - rightAxisW;
+    const chartAreaWidth = Math.max(0, chartAreaRight - chartAreaLeft);
+
+    const boxWidth = Math.max(20, (chartAreaWidth * cfg.widthPercent) / 100);
+    const boxX =
+      cfg.placement === "right" ? chartAreaRight - boxWidth : chartAreaLeft;
+    // El histograma se "dibuja" desde el lado externo (junto al eje) hacia el centro
+    const baseX = cfg.placement === "right" ? chartAreaRight : chartAreaLeft;
     const dirSign = cfg.placement === "right" ? -1 : 1;
 
     // Fondo muy tenue del recuadro para diferenciarlo visualmente

@@ -66,7 +66,7 @@ export interface VrvpConfig {
 export const DEFAULT_VRVP_CONFIG: VrvpConfig = {
   rowSize: 1000,
   valueAreaPercent: 70,
-  widthPercent: 15,
+  widthPercent: 10,
   placement: "right",
   showPOC: true,
   showVAH: false,
