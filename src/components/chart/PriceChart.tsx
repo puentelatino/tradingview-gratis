@@ -817,7 +817,31 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateRSI();
         updateMACD();
         updateSqueezeMomentum();
-        chartRef.current?.timeScale().fitContent();
+        // Tras el cambio de simbolo/timeframe forzamos auto-escala del eje de
+        // precio y encajamos el rango temporal. Si no, el eje conservaria los
+        // limites del simbolo anterior y las velas nuevas caerian fuera del
+        // area visible. Esto solo se ejecuta en el load inicial, no en ticks
+        // WS, para que el chart no "salte" durante el streaming en vivo.
+        if (chartRef.current) {
+          try {
+            chartRef.current.priceScale("right").applyOptions({ autoScale: true });
+          } catch {}
+          try {
+            chartRef.current.priceScale("left").applyOptions({ autoScale: true });
+          } catch {}
+          // Reescalar tambien los paneles secundarios (RSI, MACD, Squeeze) por
+          // si quedo congelada su escala tras un zoom manual previo.
+          try {
+            for (const pane of chartRef.current.panes()) {
+              for (const series of pane.getSeries()) {
+                try {
+                  series.priceScale().applyOptions({ autoScale: true });
+                } catch {}
+              }
+            }
+          } catch {}
+          chartRef.current.timeScale().fitContent();
+        }
         requestAnimationFrame(() => recomputePaneOffsets());
 
         if (klines.length > 0) {
