@@ -125,3 +125,18 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Targets táctiles más altos en móvil para inputs/selects/color pickers */
+@media (max-width: 767px) {
+  input[type="number"],
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  select {
+    min-height: 44px;
+    font-size: 16px; /* evita zoom-in en iOS al focar un input */
+  }
+  input[type="color"] {
+    min-height: 36px;
+  }
+}

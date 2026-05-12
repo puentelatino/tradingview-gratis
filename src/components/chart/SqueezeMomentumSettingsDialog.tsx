@@ -58,7 +58,7 @@ export function SqueezeMomentumSettingsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md bg-tv-panel">
+      <DialogContent className="max-h-[90vh] w-[95vw] max-w-md overflow-y-auto bg-tv-panel">
         <DialogHeader>
           <DialogTitle className="text-sm font-semibold">
             Squeeze Momentum (LazyBear) — Configuración

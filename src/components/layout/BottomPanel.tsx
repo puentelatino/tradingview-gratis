@@ -32,7 +32,7 @@ export function BottomPanel() {
   const upClass = (n: number) => (n >= 0 ? "text-tv-green" : "text-tv-red");
 
   return (
-    <div className="flex h-9 items-center gap-0 border-t border-tv-border bg-tv-panel px-3 text-xs">
+    <div className="flex h-9 items-center gap-0 overflow-x-auto whitespace-nowrap border-t border-tv-border bg-tv-panel px-2 text-xs md:px-3">
       <Stat label="Símbolo" value={symbol} />
       <Stat
         label="24h Cambio"
@@ -57,7 +57,7 @@ export function BottomPanel() {
         label="24h Vol (USDT)"
         value={t ? formatVolume(t.quoteVolume) : "—"}
       />
-      <div className="ml-auto flex items-center gap-2 text-[10px] text-tv-text-dim">
+      <div className="ml-auto flex shrink-0 items-center gap-2 pl-3 text-[10px] text-tv-text-dim">
         <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-tv-green" />
         <span>Binance · Live</span>
       </div>
@@ -75,7 +75,7 @@ function Stat({
   valueClass?: string;
 }) {
   return (
-    <div className="flex items-center gap-1.5 border-r border-tv-border px-3">
+    <div className="flex shrink-0 items-center gap-1.5 border-r border-tv-border px-2 md:px-3">
       <span className="text-tv-text-dim">{label}</span>
       <span className={cn("font-medium tabular-nums", valueClass ?? "text-tv-text")}>
         {value}

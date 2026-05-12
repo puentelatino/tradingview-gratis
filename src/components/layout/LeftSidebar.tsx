@@ -34,14 +34,72 @@ const LOCKED = [
   { label: "Texto" },
 ];
 
-export function LeftSidebar() {
+interface Props {
+  /** "desktop" (default) → barra vertical estrecha. "mobile" → lista. */
+  variant?: "desktop" | "mobile";
+  /** Callback al elegir una herramienta (útil para cerrar un sheet móvil). */
+  onPick?: () => void;
+}
+
+export function LeftSidebar({ variant = "desktop", onPick }: Props) {
   const tool = useChartStore((s) => s.tool);
   const setTool = useChartStore((s) => s.setTool);
   const clearPriceLines = useChartStore((s) => s.clearPriceLines);
   const symbol = useChartStore((s) => s.symbol);
 
+  if (variant === "mobile") {
+    return (
+      <div className="flex flex-col">
+        {TOOLS.map((t) => {
+          const Icon = t.icon;
+          const active = tool === t.key;
+          return (
+            <button
+              key={t.key}
+              onClick={() => {
+                setTool(t.key);
+                onPick?.();
+              }}
+              className={cn(
+                "flex min-h-[44px] items-center gap-3 px-3 py-2 text-sm",
+                active
+                  ? "bg-tv-blue/15 text-tv-blue"
+                  : "text-tv-text hover:bg-tv-panel-hover",
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">{t.label}</span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => {
+            clearPriceLines(symbol);
+            onPick?.();
+          }}
+          className="flex min-h-[44px] items-center gap-3 px-3 py-2 text-sm text-tv-text hover:bg-tv-panel-hover hover:text-tv-red"
+        >
+          <Trash2 className="h-4 w-4 shrink-0" />
+          <span className="flex-1 text-left">Borrar dibujos</span>
+        </button>
+        <div className="mt-2 border-t border-tv-border pt-2">
+          {LOCKED.map((t) => (
+            <div
+              key={t.label}
+              className="flex min-h-[44px] items-center gap-3 px-3 py-2 text-sm text-tv-text-dim opacity-50"
+            >
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1">{t.label}</span>
+              <span className="text-[10px] text-tv-yellow">Próximamente</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <aside className="flex w-11 flex-col items-center gap-0.5 border-r border-tv-border bg-tv-panel py-1.5">
+    <aside className="hidden w-11 flex-col items-center gap-0.5 border-r border-tv-border bg-tv-panel py-1.5 md:flex">
       {TOOLS.map((t) => {
         const Icon = t.icon;
         const active = tool === t.key;

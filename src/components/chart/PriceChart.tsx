@@ -23,6 +23,7 @@ import {
 } from "@/lib/store/chart-store";
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { MeasureOverlay } from "./MeasureOverlay";
 import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 import { VolumeProfileSettingsDialog } from "./VolumeProfileSettingsDialog";
@@ -122,6 +123,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const config = useChartStore((s) => s.config);
   const vrvpConfig = useChartStore((s) => s.vrvpConfig);
   const sqzConfig = useChartStore((s) => s.squeezeMomentumConfig);
+  const isMobile = useIsMobile();
   const [vrvpDialogOpen, setVrvpDialogOpen] = useState(false);
   const [sqzDialogOpen, setSqzDialogOpen] = useState(false);
   const sqzConfigRef = useRef(sqzConfig);
@@ -197,6 +199,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
         secondsVisible: false,
         rightOffset: 12,
         barSpacing: 8,
+      },
+      // En móvil queremos que el chart no capture el gesto vertical de la
+      // página (pan vertical = scroll de la página, no zoom del eje de precio).
+      // El drag horizontal y el pinch siguen funcionando.
+      handleScroll: {
+        vertTouchDrag: false,
       },
       autoSize: true,
     });
@@ -993,48 +1001,52 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
-        style={{ top: (paneOffsets[0]?.top ?? 0) + 12, left: 12 }}
+        style={{ top: (paneOffsets[0]?.top ?? 0) + (isMobile ? 6 : 12), left: isMobile ? 6 : 12, right: isMobile ? 6 : undefined }}
         className="pointer-events-none absolute z-10 flex flex-col gap-1 text-xs tabular-nums"
       >
-        {/* Row 1: symbol info + OHLC stats inline on hover (fixed height, never wraps) */}
-        <div className="flex h-5 flex-nowrap items-center gap-x-3 overflow-hidden whitespace-nowrap">
-          <div className="flex shrink-0 items-center gap-2 text-[13px] font-semibold">
-            <span className="text-tv-text">{symbol}</span>
-            <span className="text-tv-text-muted">·</span>
-            <span className="uppercase text-tv-text-muted">{timeframe}</span>
-            <span className="text-tv-text-muted">·</span>
-            <span className="text-tv-text-muted">Binance</span>
-          </div>
-          {hover && (
-            <div className="flex items-center gap-x-3 text-[11px]">
-              <span className="text-tv-text-muted">
-                O <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.o)}</span>
-              </span>
-              <span className="text-tv-text-muted">
-                H <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.h)}</span>
-              </span>
-              <span className="text-tv-text-muted">
-                L <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.l)}</span>
-              </span>
-              <span className="text-tv-text-muted">
-                C <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.c)}</span>
-              </span>
-              <span className={greenOrRed(hover.pct)}>
-                {hover.pct >= 0 ? "+" : ""}
-                {hover.pct.toFixed(2)}%
-              </span>
-              <span className="text-tv-text-muted">
-                Vol <span className="text-tv-text">{formatVolume(hover.v)}</span>
-              </span>
+        {/* Row 1: en desktop muestra simbolo+timeframe+OHLC en hover. En movil
+            esa info ya esta en el header de la app — la ocultamos para liberar
+            espacio. Solo el bloque OHLC en hover se mantiene en desktop. */}
+        {!isMobile && (
+          <div className="flex h-5 flex-nowrap items-center gap-x-3 overflow-hidden whitespace-nowrap">
+            <div className="flex shrink-0 items-center gap-2 text-[13px] font-semibold">
+              <span className="text-tv-text">{symbol}</span>
+              <span className="text-tv-text-muted">·</span>
+              <span className="uppercase text-tv-text-muted">{timeframe}</span>
+              <span className="text-tv-text-muted">·</span>
+              <span className="text-tv-text-muted">Binance</span>
             </div>
-          )}
-        </div>
+            {hover && (
+              <div className="flex items-center gap-x-3 text-[11px]">
+                <span className="text-tv-text-muted">
+                  O <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.o)}</span>
+                </span>
+                <span className="text-tv-text-muted">
+                  H <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.h)}</span>
+                </span>
+                <span className="text-tv-text-muted">
+                  L <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.l)}</span>
+                </span>
+                <span className="text-tv-text-muted">
+                  C <span className={greenOrRed(hover.c - hover.o)}>{formatPrice(hover.c)}</span>
+                </span>
+                <span className={greenOrRed(hover.pct)}>
+                  {hover.pct >= 0 ? "+" : ""}
+                  {hover.pct.toFixed(2)}%
+                </span>
+                <span className="text-tv-text-muted">
+                  Vol <span className="text-tv-text">{formatVolume(hover.v)}</span>
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Row 2: big live price (always present — reserves space even while loading) */}
+        {/* Row 2: precio en vivo + % */}
         <div className="flex h-7 items-center gap-2">
           {lastPrice ? (
             <>
-              <span className={`text-lg font-semibold tabular-nums ${greenOrRed(lastPrice.pct)}`}>
+              <span className={`font-semibold tabular-nums ${isMobile ? "text-base" : "text-lg"} ${greenOrRed(lastPrice.pct)}`}>
                 {formatPrice(lastPrice.value)}
               </span>
               <span className={`text-xs ${greenOrRed(lastPrice.pct)}`}>
@@ -1047,10 +1059,17 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
         </div>
 
-        {/* Indicator pills for the main pane (fixed position below price) */}
-        <div className="mt-1 flex flex-col items-start gap-1">
+        {/* Pills indicadores: en desktop apiladas vertical; en movil una fila scrolleable */}
+        <div
+          className={
+            isMobile
+              ? "mt-1 -mx-1 flex max-w-[calc(100vw-12px)] items-center gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              : "mt-1 flex flex-col items-start gap-1"
+          }
+        >
           {indicators.ema20 && (
             <IndicatorPill
+              compact={isMobile}
               name={`EMA ${config.ema20}`}
               value={lastValues.ema20 !== undefined ? formatPrice(lastValues.ema20) : undefined}
               color={INDICATOR_COLORS.ema20}
@@ -1062,6 +1081,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
           {indicators.ema50 && (
             <IndicatorPill
+              compact={isMobile}
               name={`EMA ${config.ema50}`}
               value={lastValues.ema50 !== undefined ? formatPrice(lastValues.ema50) : undefined}
               color={INDICATOR_COLORS.ema50}
@@ -1073,6 +1093,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
           {indicators.ema200 && (
             <IndicatorPill
+              compact={isMobile}
               name={`EMA ${config.ema200}`}
               value={lastValues.ema200 !== undefined ? formatPrice(lastValues.ema200) : undefined}
               color={INDICATOR_COLORS.ema200}
@@ -1084,6 +1105,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
           {indicators.volume && (
             <IndicatorPill
+              compact={isMobile}
               name="Vol"
               value={lastValues.volume !== undefined ? formatVolume(lastValues.volume) : undefined}
               color={INDICATOR_COLORS.volume}
@@ -1095,6 +1117,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
           {indicators.vrvp && (
             <IndicatorPill
+              compact={isMobile}
               name="VRVP"
               color={INDICATOR_COLORS.vrvp}
               hidden={hidden.vrvp}
@@ -1109,10 +1132,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
       {/* RSI pane label */}
       {indicators.rsi && paneOffsets[rsiPaneIdx] && (
         <div
-          style={{ top: paneOffsets[rsiPaneIdx].top + 6, left: 12 }}
+          style={{ top: paneOffsets[rsiPaneIdx].top + 6, left: isMobile ? 6 : 12 }}
           className="pointer-events-none absolute z-10"
         >
           <IndicatorPill
+            compact={isMobile}
             name={`RSI ${config.rsi}`}
             value={lastValues.rsi !== undefined ? lastValues.rsi.toFixed(2) : undefined}
             color={INDICATOR_COLORS.rsi}
@@ -1127,10 +1151,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
       {/* MACD pane label */}
       {indicators.macd && paneOffsets[macdPaneIdx] && (
         <div
-          style={{ top: paneOffsets[macdPaneIdx].top + 6, left: 12 }}
+          style={{ top: paneOffsets[macdPaneIdx].top + 6, left: isMobile ? 6 : 12 }}
           className="pointer-events-none absolute z-10"
         >
           <IndicatorPill
+            compact={isMobile}
             name={`MACD ${config.macdFast}, ${config.macdSlow}, ${config.macdSignal}`}
             value={
               lastValues.macd !== undefined
@@ -1149,10 +1174,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
       {/* Squeeze Momentum pane label */}
       {indicators.squeezeMomentum && paneOffsets[sqzPaneIdx] && (
         <div
-          style={{ top: paneOffsets[sqzPaneIdx].top + 6, left: 12 }}
+          style={{ top: paneOffsets[sqzPaneIdx].top + 6, left: isMobile ? 6 : 12 }}
           className="pointer-events-none absolute z-10"
         >
           <IndicatorPill
+            compact={isMobile}
             name={`SQZMOM ${sqzConfig.bbLength}, ${sqzConfig.kcLength}`}
             value={
               lastValues.squeezeVal !== undefined

@@ -16,7 +16,7 @@ export default function HomePage() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-tv-bg">
       <Header />
       <div className="flex min-h-0 flex-1">
-        <LeftSidebar />
+        <LeftSidebar variant="desktop" />
         <main className="relative flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
             <PriceChart symbol={symbol} timeframe={timeframe} />
