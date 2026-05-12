@@ -125,3 +125,4 @@ Este repo es la base de la serie **"TradingView Gratis"**:
 MIT — usalo, forkealo, monetizalo, lo que quieras.
 
 `lightweight-charts` es Apache 2.0 con atribución a TradingView — la atribución vive en el footer/UI por requerimiento de la licencia.
+<!-- VRVP indicator added -->
