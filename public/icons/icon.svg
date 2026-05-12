@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="TradingView Gratis">
+  <!-- Fondo dark con esquinas redondeadas. El radius esta dentro de la safe
+       zone maskable (~80%) para Android adaptive icons. -->
+  <rect width="512" height="512" rx="96" ry="96" fill="#131722"/>
+
+  <!-- Linea base del eje (decorativa, muy tenue) -->
+  <line x1="80" y1="424" x2="432" y2="424" stroke="#2a2e39" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Vela alcista (verde, izquierda) -->
+  <g>
+    <rect x="166" y="116" width="8" height="304" rx="4" fill="#26a69a"/>
+    <rect x="128" y="180" width="84" height="180" rx="8" fill="#26a69a"/>
+  </g>
+
+  <!-- Vela bajista (rojo, derecha) -->
+  <g>
+    <rect x="338" y="116" width="8" height="304" rx="4" fill="#ef5350"/>
+    <rect x="300" y="156" width="84" height="180" rx="8" fill="#ef5350"/>
+  </g>
+
+  <!-- Acento de tendencia: flecha sutil arriba a la derecha -->
+  <path d="M 408 116 L 408 156 L 368 156" fill="none" stroke="#26a69a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+</svg>

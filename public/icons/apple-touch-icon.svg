@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180" role="img" aria-label="TradingView Gratis">
+  <rect width="180" height="180" rx="34" ry="34" fill="#131722"/>
+  <line x1="28" y1="149" x2="152" y2="149" stroke="#2a2e39" stroke-width="2" stroke-linecap="round"/>
+  <g>
+    <rect x="58" y="41" width="3" height="107" rx="1.5" fill="#26a69a"/>
+    <rect x="45" y="63" width="30" height="64" rx="3" fill="#26a69a"/>
+  </g>
+  <g>
+    <rect x="119" y="41" width="3" height="107" rx="1.5" fill="#ef5350"/>
+    <rect x="106" y="55" width="30" height="64" rx="3" fill="#ef5350"/>
+  </g>
+  <path d="M 144 41 L 144 55 L 129 55" fill="none" stroke="#26a69a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+</svg>
