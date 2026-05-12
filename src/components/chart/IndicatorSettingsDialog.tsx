@@ -22,6 +22,7 @@ const TITLES: Record<IndicatorKey, string> = {
   rsi: "RSI",
   macd: "MACD",
   volume: "Volumen",
+  vrvp: "Volume Profile (VRVP)",
 };
 
 export function IndicatorSettingsDialog() {

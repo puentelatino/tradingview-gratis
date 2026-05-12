@@ -24,6 +24,8 @@ import {
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
+import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
+import { VolumeProfileSettingsDialog } from "./VolumeProfileSettingsDialog";
 
 interface MeasurePoint {
   time: number;
@@ -111,6 +113,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const indicators = useChartStore((s) => s.indicators);
   const hidden = useChartStore((s) => s.hidden);
   const config = useChartStore((s) => s.config);
+  const vrvpConfig = useChartStore((s) => s.vrvpConfig);
+  const [vrvpDialogOpen, setVrvpDialogOpen] = useState(false);
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -785,6 +789,25 @@ export function PriceChart({ symbol, timeframe }: Props) {
       <div ref={containerRef} className="h-full w-full" />
       {measureRender}
 
+      {/* Volume Profile (VRVP) overlay sobre el pane principal */}
+      {paneOffsets[0] && (
+        <VolumeProfileOverlay
+          chart={chartRef.current}
+          candleSeries={candleSeriesRef.current}
+          candles={candlesRef.current}
+          paneTop={paneOffsets[0].top}
+          paneHeight={paneOffsets[0].height}
+          config={vrvpConfig}
+          visible={indicators.vrvp && !hidden.vrvp}
+          redrawTick={renderTick + (lastPrice?.value ?? 0)}
+        />
+      )}
+
+      <VolumeProfileSettingsDialog
+        open={vrvpDialogOpen}
+        onOpenChange={setVrvpDialogOpen}
+      />
+
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
         style={{ top: (paneOffsets[0]?.top ?? 0) + 12, left: 12 }}
@@ -885,6 +908,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
               onToggleHide={() => toggleHidden("volume")}
               onSettings={() => setSettingsTarget("volume")}
               onRemove={() => removeIndicator("volume")}
+            />
+          )}
+          {indicators.vrvp && (
+            <IndicatorPill
+              name="VRVP"
+              color={INDICATOR_COLORS.vrvp}
+              hidden={hidden.vrvp}
+              onToggleHide={() => toggleHidden("vrvp")}
+              onSettings={() => setVrvpDialogOpen(true)}
+              onRemove={() => removeIndicator("vrvp")}
             />
           )}
         </div>

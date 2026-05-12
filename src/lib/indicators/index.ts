@@ -115,3 +115,176 @@ export function macd(
   void slowStartTime;
   return out;
 }
+
+// ─── Volume Profile (VRVP) ───────────────────────────────────────────────────
+
+export interface VolumeProfileRow {
+  priceLow: number;
+  priceHigh: number;
+  upVolume: number;
+  downVolume: number;
+  totalVolume: number;
+}
+
+export interface VolumeProfileOptions {
+  /** Número de filas en las que dividir el rango de precio visible */
+  rowSize: number;
+  /** Porcentaje del volumen total que define el Value Area (0-100) */
+  valueAreaPercent: number;
+}
+
+export interface VolumeProfileResult {
+  rows: VolumeProfileRow[];
+  /** Volumen máximo entre todas las filas (para escalar el ancho de las barras) */
+  maxVolume: number;
+  /** Volumen total acumulado de todas las filas */
+  totalVolume: number;
+  /** Índice de la fila POC (Point of Control) — la de mayor volumen */
+  pocIndex: number;
+  /** Índice de la fila VAH (Value Area High) */
+  vahIndex: number;
+  /** Índice de la fila VAL (Value Area Low) */
+  valIndex: number;
+  /** Precio mínimo cubierto por el perfil */
+  priceMin: number;
+  /** Precio máximo cubierto por el perfil */
+  priceMax: number;
+}
+
+/**
+ * Volume Profile sobre un conjunto de velas.
+ *
+ * Algoritmo:
+ *   1. Calcula min/max de precio en las velas.
+ *   2. Divide el rango en `rowSize` filas equiespaciadas.
+ *   3. Para cada vela, distribuye su volumen proporcionalmente entre las filas
+ *      que su rango [low, high] toca. Si close >= open → upVolume, si no → downVolume.
+ *   4. POC = fila con mayor totalVolume.
+ *   5. Value Area: partiendo del POC se añaden filas adyacentes (la de mayor
+ *      volumen arriba/abajo) hasta cubrir `valueAreaPercent` % del volumen total.
+ *
+ * Performance: usa Float64Array para sumas de volumen.
+ */
+export function calculateVolumeProfile(
+  candles: Candle[],
+  options: VolumeProfileOptions,
+): VolumeProfileResult | null {
+  const rowSize = Math.max(1, Math.floor(options.rowSize));
+  if (candles.length === 0) return null;
+
+  // 1. Rango de precios
+  let priceMin = Infinity;
+  let priceMax = -Infinity;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.low < priceMin) priceMin = c.low;
+    if (c.high > priceMax) priceMax = c.high;
+  }
+  if (!isFinite(priceMin) || !isFinite(priceMax) || priceMax <= priceMin) {
+    return null;
+  }
+
+  const totalRange = priceMax - priceMin;
+  const rowHeight = totalRange / rowSize;
+
+  // 2. Acumuladores
+  const upVol = new Float64Array(rowSize);
+  const downVol = new Float64Array(rowSize);
+
+  // 3. Distribuir volumen de cada vela
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (c.volume <= 0) continue;
+    const range = c.high - c.low;
+    const isUp = c.close >= c.open;
+
+    if (range <= 0) {
+      // Vela "doji" sin rango — todo el volumen va a la fila que contiene su precio
+      const idx = Math.min(
+        rowSize - 1,
+        Math.max(0, Math.floor((c.close - priceMin) / rowHeight)),
+      );
+      if (isUp) upVol[idx] += c.volume;
+      else downVol[idx] += c.volume;
+      continue;
+    }
+
+    // Índices de las filas tocadas
+    const lowIdx = Math.max(0, Math.floor((c.low - priceMin) / rowHeight));
+    const highIdx = Math.min(
+      rowSize - 1,
+      Math.floor((c.high - priceMin) / rowHeight),
+    );
+
+    if (lowIdx === highIdx) {
+      if (isUp) upVol[lowIdx] += c.volume;
+      else downVol[lowIdx] += c.volume;
+      continue;
+    }
+
+    // Distribución proporcional: cada fila recibe (overlap_con_la_vela / range) * volume
+    const volPerUnit = c.volume / range;
+    for (let r = lowIdx; r <= highIdx; r++) {
+      const rowLow = priceMin + r * rowHeight;
+      const rowHigh = rowLow + rowHeight;
+      const overlap = Math.min(rowHigh, c.high) - Math.max(rowLow, c.low);
+      if (overlap <= 0) continue;
+      const share = overlap * volPerUnit;
+      if (isUp) upVol[r] += share;
+      else downVol[r] += share;
+    }
+  }
+
+  // 4. Construir filas, hallar POC y total
+  const rows: VolumeProfileRow[] = new Array(rowSize);
+  let maxVolume = 0;
+  let pocIndex = 0;
+  let totalVolume = 0;
+  for (let r = 0; r < rowSize; r++) {
+    const u = upVol[r];
+    const d = downVol[r];
+    const t = u + d;
+    rows[r] = {
+      priceLow: priceMin + r * rowHeight,
+      priceHigh: priceMin + (r + 1) * rowHeight,
+      upVolume: u,
+      downVolume: d,
+      totalVolume: t,
+    };
+    totalVolume += t;
+    if (t > maxVolume) {
+      maxVolume = t;
+      pocIndex = r;
+    }
+  }
+
+  // 5. Value Area — expandir desde POC hacia arriba/abajo eligiendo siempre
+  //    la dirección con mayor volumen marginal, hasta cubrir el % objetivo.
+  const target = (totalVolume * Math.max(0, Math.min(100, options.valueAreaPercent))) / 100;
+  let lo = pocIndex;
+  let hi = pocIndex;
+  let acc = rows[pocIndex].totalVolume;
+  while (acc < target && (lo > 0 || hi < rowSize - 1)) {
+    const upNext = hi < rowSize - 1 ? rows[hi + 1].totalVolume : -1;
+    const downNext = lo > 0 ? rows[lo - 1].totalVolume : -1;
+    if (upNext < 0 && downNext < 0) break;
+    if (upNext >= downNext) {
+      hi += 1;
+      acc += rows[hi].totalVolume;
+    } else {
+      lo -= 1;
+      acc += rows[lo].totalVolume;
+    }
+  }
+
+  return {
+    rows,
+    maxVolume,
+    totalVolume,
+    pocIndex,
+    vahIndex: hi,
+    valIndex: lo,
+    priceMin,
+    priceMax,
+  };
+}

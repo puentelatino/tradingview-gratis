@@ -10,7 +10,40 @@ export type IndicatorKey =
   | "ema200"
   | "rsi"
   | "macd"
-  | "volume";
+  | "volume"
+  | "vrvp";
+
+export type VrvpPlacement = "left" | "right";
+
+export interface VrvpConfig {
+  /** Número de filas en que dividir el rango de precio visible */
+  rowSize: number;
+  /** Porcentaje del volumen total que define el Value Area (0-100) */
+  valueAreaPercent: number;
+  /** Ancho del recuadro como % del ancho del chart */
+  widthPercent: number;
+  /** Lado donde se renderiza el perfil */
+  placement: VrvpPlacement;
+  showPOC: boolean;
+  showVAH: boolean;
+  showVAL: boolean;
+  upColor: string;
+  downColor: string;
+  pocColor: string;
+}
+
+export const DEFAULT_VRVP_CONFIG: VrvpConfig = {
+  rowSize: 1000,
+  valueAreaPercent: 70,
+  widthPercent: 15,
+  placement: "right",
+  showPOC: true,
+  showVAH: false,
+  showVAL: false,
+  upColor: "#26A69A",
+  downColor: "#EF5350",
+  pocColor: "#FFFFFF",
+};
 
 export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
 
@@ -47,6 +80,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   rsi: "#ab47bc",
   macd: "#2962ff",
   volume: "#787b86",
+  vrvp: "#26a69a",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -71,6 +105,7 @@ interface ChartState {
   hidden: Record<IndicatorKey, boolean>;
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
+  vrvpConfig: VrvpConfig;
   watchlist: string[];
 
   // Ephemeral UI state (not persisted)
@@ -87,6 +122,8 @@ interface ChartState {
   removeIndicator: (key: IndicatorKey) => void;
   toggleHidden: (key: IndicatorKey) => void;
   setConfig: (patch: Partial<IndicatorConfig>) => void;
+  setVrvpConfig: (patch: Partial<VrvpConfig>) => void;
+  resetVrvpConfig: () => void;
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
@@ -108,6 +145,7 @@ export const useChartStore = create<ChartState>()(
         rsi: true,
         macd: false,
         volume: true,
+        vrvp: false,
       },
       hidden: {
         ema20: false,
@@ -116,8 +154,10 @@ export const useChartStore = create<ChartState>()(
         rsi: false,
         macd: false,
         volume: false,
+        vrvp: false,
       },
       config: { ...DEFAULT_CONFIG },
+      vrvpConfig: { ...DEFAULT_VRVP_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
       tool: "cursor",
       priceLines: [],
@@ -143,6 +183,9 @@ export const useChartStore = create<ChartState>()(
         set((s) => ({ hidden: { ...s.hidden, [key]: !s.hidden[key] } })),
       setConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
+      setVrvpConfig: (patch) =>
+        set((s) => ({ vrvpConfig: { ...s.vrvpConfig, ...patch } })),
+      resetVrvpConfig: () => set({ vrvpConfig: { ...DEFAULT_VRVP_CONFIG } }),
       addToWatchlist: (s) =>
         set((state) => ({
           watchlist: state.watchlist.includes(s)
@@ -185,6 +228,7 @@ export const useChartStore = create<ChartState>()(
         indicators: s.indicators,
         hidden: s.hidden,
         config: s.config,
+        vrvpConfig: s.vrvpConfig,
         watchlist: s.watchlist,
       }),
     },
