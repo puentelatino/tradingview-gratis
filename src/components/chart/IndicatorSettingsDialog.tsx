@@ -24,6 +24,7 @@ const TITLES: Record<IndicatorKey, string> = {
   volume: "Volumen",
   vrvp: "Volume Profile (VRVP)",
   squeezeMomentum: "Squeeze Momentum (LazyBear)",
+  koncorde: "Koncorde (Blai5)",
 };
 
 export function IndicatorSettingsDialog() {

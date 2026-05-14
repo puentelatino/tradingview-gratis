@@ -116,6 +116,433 @@ export function macd(
   return out;
 }
 
+// ─── Koncorde (Blai5) ────────────────────────────────────────────────────────
+
+export interface KoncordeOptions {
+  m: number;
+  bollLength: number;
+  bollMult: number;
+  mfiLength: number;
+  rsiLength: number;
+  stochLength: number;
+  stochSmooth: number;
+  rangeLookback: number;
+}
+
+export interface KoncordePoint {
+  time: number;
+  azul: number | null;
+  marron: number | null;
+  verde: number | null;
+  media: number | null;
+}
+
+/** SMA sobre un array numerico. Devuelve null hasta tener `period` valores. */
+function smaArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += values[i];
+    if (i >= period) sum -= values[i - period];
+    if (i >= period - 1) out[i] = sum / period;
+  }
+  return out;
+}
+
+/** EMA sobre array numerico, sembrada con SMA(period). */
+function emaArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  if (n < period) return out;
+  const k = 2 / (period + 1);
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += values[i];
+  seed /= period;
+  out[period - 1] = seed;
+  let prev = seed;
+  for (let i = period; i < n; i++) {
+    prev = values[i] * k + prev * (1 - k);
+    out[i] = prev;
+  }
+  return out;
+}
+
+/** Rolling sum de los ultimos `period` valores (null hasta tener ventana llena). */
+function sumArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  let s = 0;
+  for (let i = 0; i < n; i++) {
+    s += values[i];
+    if (i >= period) s -= values[i - period];
+    if (i >= period - 1) out[i] = s;
+  }
+  return out;
+}
+
+/** Maximo en ventana movil de `period` (null hasta tener ventana llena). */
+function highestArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (i < period - 1) continue;
+    let m = -Infinity;
+    for (let k = i - period + 1; k <= i; k++) if (values[k] > m) m = values[k];
+    out[i] = m;
+  }
+  return out;
+}
+
+/** Minimo en ventana movil de `period`. */
+function lowestArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (i < period - 1) continue;
+    let m = Infinity;
+    for (let k = i - period + 1; k <= i; k++) if (values[k] < m) m = values[k];
+    out[i] = m;
+  }
+  return out;
+}
+
+/** Desviacion poblacional rolling sobre array numerico. */
+function stdevPopArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = period - 1; i < n; i++) {
+    let sum = 0;
+    for (let k = i - period + 1; k <= i; k++) sum += values[k];
+    const mean = sum / period;
+    let acc = 0;
+    for (let k = i - period + 1; k <= i; k++) {
+      const d = values[k] - mean;
+      acc += d * d;
+    }
+    out[i] = Math.sqrt(acc / period);
+  }
+  return out;
+}
+
+/**
+ * RSI clasico sobre array numerico, periodo Wilder. Devuelve null hasta tener
+ * `period` cambios validos.
+ */
+function rsiArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  if (n <= period) return out;
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = values[i] - values[i - 1];
+    if (d >= 0) gain += d;
+    else loss -= d;
+  }
+  gain /= period;
+  loss /= period;
+  const firstRs = loss === 0 ? 100 : gain / loss;
+  out[period] = 100 - 100 / (1 + firstRs);
+  for (let i = period + 1; i < n; i++) {
+    const d = values[i] - values[i - 1];
+    const g = d > 0 ? d : 0;
+    const l = d < 0 ? -d : 0;
+    gain = (gain * (period - 1) + g) / period;
+    loss = (loss * (period - 1) + l) / period;
+    const rs = loss === 0 ? 100 : gain / loss;
+    out[i] = 100 - 100 / (1 + rs);
+  }
+  return out;
+}
+
+/**
+ * PVI (Positive Volume Index, Norman Fosback) — version Koncorde.
+ *
+ * Recurrencia: si volume[i] > volume[i-1] entonces
+ *   pvi[i] = pvi[i-1] + ((close[i] - close[i-1]) / close[i-1]) * pvi[i-1]
+ * en caso contrario pvi[i] = pvi[i-1].
+ *
+ * Inicializacion: el Pine v2 original deja la primera barra en estado na y
+ * la convencion estandar (Fosback) es arrancar en 1000. La rama
+ * `(na(pvi[1]) ? pvi[1] : sval)` del codigo original es ambigua/buggy en la
+ * primera vela; usar 1000 produce el resultado que todos los publishers
+ * privados de Blai5 muestran y es lo que esperan los usuarios.
+ */
+export function calculatePVI(candles: Candle[]): number[] {
+  const n = candles.length;
+  const out = new Array<number>(n);
+  if (n === 0) return out;
+  out[0] = 1000;
+  for (let i = 1; i < n; i++) {
+    const prev = out[i - 1];
+    if (
+      candles[i].volume > candles[i - 1].volume &&
+      candles[i - 1].close !== 0
+    ) {
+      out[i] = prev + ((candles[i].close - candles[i - 1].close) / candles[i - 1].close) * prev;
+    } else {
+      out[i] = prev;
+    }
+  }
+  return out;
+}
+
+/** NVI: igual que PVI pero la condicion es `volume[i] < volume[i-1]`. */
+export function calculateNVI(candles: Candle[]): number[] {
+  const n = candles.length;
+  const out = new Array<number>(n);
+  if (n === 0) return out;
+  out[0] = 1000;
+  for (let i = 1; i < n; i++) {
+    const prev = out[i - 1];
+    if (
+      candles[i].volume < candles[i - 1].volume &&
+      candles[i - 1].close !== 0
+    ) {
+      out[i] = prev + ((candles[i].close - candles[i - 1].close) / candles[i - 1].close) * prev;
+    } else {
+      out[i] = prev;
+    }
+  }
+  return out;
+}
+
+/**
+ * MFI a la "manera Pine v2" del Koncorde: NO es el MFI clasico de Wilder.
+ * Es un RSI sobre flujos de dinero, donde:
+ *   upper = sum( volume * (change(hlc3) > 0 ? hlc3 : 0), length )
+ *   lower = sum( volume * (change(hlc3) < 0 ? hlc3 : 0), length )
+ *   xmf   = 100 - 100 / (1 + upper / lower)
+ *
+ * En el codigo original la comparacion incluye igualdad (<=0 y >=0 producen 0),
+ * lo cual es asimetrico — replicamos el comportamiento exacto.
+ */
+function koncordeMFI(
+  hlc3: number[],
+  volume: number[],
+  length: number,
+): (number | null)[] {
+  const n = hlc3.length;
+  // change(src) en Pine v2 = src - src[1]; la primera barra es na (=> 0).
+  const upArr = new Array<number>(n).fill(0);
+  const dnArr = new Array<number>(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    const ch = hlc3[i] - hlc3[i - 1];
+    // upper: ch <= 0 ⇒ 0 (asi que solo cuenta cuando ch > 0)
+    if (ch > 0) upArr[i] = volume[i] * hlc3[i];
+    // lower: ch >= 0 ⇒ 0 (solo cuando ch < 0)
+    if (ch < 0) dnArr[i] = volume[i] * hlc3[i];
+  }
+  const upperSum = sumArr(upArr, length);
+  const lowerSum = sumArr(dnArr, length);
+  const out: (number | null)[] = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const u = upperSum[i];
+    const l = lowerSum[i];
+    if (u === null || l === null) continue;
+    if (l === 0) {
+      out[i] = 100;
+    } else {
+      const rs = u / l;
+      out[i] = 100 - 100 / (1 + rs);
+    }
+  }
+  return out;
+}
+
+/**
+ * Calcula el Koncorde de Blai5 punto a punto. Devuelve null en las barras
+ * iniciales donde alguno de los componentes aun no esta disponible.
+ *
+ * Composicion (replica exacta del Pine v2):
+ *   tprice  = ohlc4
+ *   pvi/nvi recursivos
+ *   oscp    = (pvi - ema(pvi,m)) * 100 / (highest(pvim,90) - lowest(pvim,90))
+ *   azul    = (nvi - ema(nvi,m)) * 100 / (highest(nvim,90) - lowest(nvim,90))
+ *   xmf     = MFI peculiar
+ *   BollOsc = ((tprice - mid) / (upper - lower)) * 100 con bandas de Bollinger
+ *             de tprice (length=25, mult=2)
+ *   xrsi    = rsi(tprice, 14)
+ *   stoc    = SMA( 100 * (tprice - lowest(low,21)) / (highest(high,21) - lowest(low,21)), 3 )
+ *   marron  = (xrsi + xmf + BollOsc + stoc/3) / 2
+ *   verde   = marron + oscp
+ *   media   = ema(marron, m)
+ */
+export function calculateKoncorde(
+  candles: Candle[],
+  options: KoncordeOptions,
+): KoncordePoint[] {
+  const n = candles.length;
+  const out: KoncordePoint[] = new Array(n);
+  if (n === 0) return out;
+
+  const {
+    m,
+    bollLength,
+    bollMult,
+    mfiLength,
+    rsiLength,
+    stochLength,
+    stochSmooth,
+    rangeLookback,
+  } = options;
+
+  // Precomputos
+  const close = new Array<number>(n);
+  const high = new Array<number>(n);
+  const low = new Array<number>(n);
+  const volume = new Array<number>(n);
+  const hlc3 = new Array<number>(n);
+  const ohlc4 = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const c = candles[i];
+    close[i] = c.close;
+    high[i] = c.high;
+    low[i] = c.low;
+    volume[i] = c.volume;
+    hlc3[i] = (c.high + c.low + c.close) / 3;
+    ohlc4[i] = (c.open + c.high + c.low + c.close) / 4;
+  }
+  const tprice = ohlc4;
+
+  // PVI / NVI y sus EMA(m) + rangos rolling 90
+  const pvi = calculatePVI(candles);
+  const nvi = calculateNVI(candles);
+  const pvim = emaArr(pvi, m);
+  const nvim = emaArr(nvi, m);
+  const pvimax = highestArr(pvim.map((v) => v ?? -Infinity), rangeLookback);
+  const pvimin = lowestArr(pvim.map((v) => v ?? Infinity), rangeLookback);
+  const nvimax = highestArr(nvim.map((v) => v ?? -Infinity), rangeLookback);
+  const nvimin = lowestArr(nvim.map((v) => v ?? Infinity), rangeLookback);
+
+  // Bollinger Oscillator sobre tprice
+  const basis = smaArr(tprice, bollLength);
+  const dev = stdevPopArr(tprice, bollLength);
+
+  // RSI(tprice, rsiLength)
+  const xrsi = rsiArr(tprice, rsiLength);
+
+  // MFI peculiar
+  const xmf = koncordeMFI(hlc3, volume, mfiLength);
+
+  // Stochastic sobre tprice con highest(high)/lowest(low) de stochLength
+  const hh = highestArr(high, stochLength);
+  const ll = lowestArr(low, stochLength);
+  const kRaw = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const h = hh[i];
+    const l = ll[i];
+    if (h === null || l === null || h === l) continue;
+    kRaw[i] = (100 * (tprice[i] - l)) / (h - l);
+  }
+  const stoc = smaArr(kRaw, stochSmooth);
+
+  // Pasamos marron como array para luego sacar su EMA(m)
+  const marronArr = new Array<number | null>(n).fill(null);
+  const verdeArr = new Array<number | null>(n).fill(null);
+  const azulArr = new Array<number | null>(n).fill(null);
+
+  for (let i = 0; i < n; i++) {
+    const time = candles[i].time;
+
+    // azul: (nvi - nvim) * 100 / (nvimax - nvimin)
+    const nvm = nvim[i];
+    const nvMax = nvimax[i];
+    const nvMin = nvimin[i];
+    let azul: number | null = null;
+    if (nvm !== null && nvMax !== null && nvMin !== null && nvMax !== nvMin) {
+      azul = ((nvi[i] - nvm) * 100) / (nvMax - nvMin);
+      azulArr[i] = azul;
+    }
+
+    // oscp: (pvi - pvim) * 100 / (pvimax - pvimin)
+    const pvm = pvim[i];
+    const pvMax = pvimax[i];
+    const pvMin = pvimin[i];
+    let oscp: number | null = null;
+    if (pvm !== null && pvMax !== null && pvMin !== null && pvMax !== pvMin) {
+      oscp = ((pvi[i] - pvm) * 100) / (pvMax - pvMin);
+    }
+
+    // BollOsc
+    let bollOsc: number | null = null;
+    const b = basis[i];
+    const d = dev[i];
+    if (b !== null && d !== null) {
+      const upper = b + bollMult * d;
+      const lower = b - bollMult * d;
+      const OB1 = (upper + lower) / 2;
+      const OB2 = upper - lower;
+      if (OB2 !== 0) bollOsc = ((tprice[i] - OB1) / OB2) * 100;
+    }
+
+    // marron: (xrsi + xmf + BollOsc + stoc/3) / 2
+    let marron: number | null = null;
+    if (
+      xrsi[i] !== null &&
+      xmf[i] !== null &&
+      bollOsc !== null &&
+      stoc[i] !== null
+    ) {
+      marron = (((xrsi[i] as number) + (xmf[i] as number) + bollOsc + (stoc[i] as number) / 3) / 2);
+      marronArr[i] = marron;
+    }
+
+    // verde: marron + oscp
+    let verde: number | null = null;
+    if (marron !== null && oscp !== null) {
+      verde = marron + oscp;
+      verdeArr[i] = verde;
+    }
+
+    out[i] = { time, azul, marron, verde, media: null };
+  }
+
+  // media = ema(marron, m) — recorremos marronArr saltando los null iniciales
+  // y sembrando la EMA cuando hay m valores consecutivos disponibles.
+  let firstValid = -1;
+  for (let i = 0; i < n; i++) {
+    if (marronArr[i] !== null) {
+      firstValid = i;
+      break;
+    }
+  }
+  if (firstValid >= 0 && firstValid + m - 1 < n) {
+    let seed = 0;
+    let ok = true;
+    for (let i = firstValid; i < firstValid + m; i++) {
+      const v = marronArr[i];
+      if (v === null) {
+        ok = false;
+        break;
+      }
+      seed += v;
+    }
+    if (ok) {
+      const k = 2 / (m + 1);
+      let prev = seed / m;
+      out[firstValid + m - 1].media = prev;
+      for (let i = firstValid + m; i < n; i++) {
+        const v = marronArr[i];
+        if (v === null) continue;
+        prev = v * k + prev * (1 - k);
+        out[i].media = prev;
+      }
+    }
+  }
+
+  // Devolvemos verde/marron/azul ya escritos en out — copiamos de los arrays
+  // por si en algun punto los recolocamos
+  for (let i = 0; i < n; i++) {
+    out[i].verde = verdeArr[i];
+    out[i].marron = marronArr[i];
+    out[i].azul = azulArr[i];
+  }
+
+  return out;
+}
+
 // ─── Squeeze Momentum (LazyBear, SQZMOM_LB) ──────────────────────────────────
 
 export type SqueezeState = "on" | "off" | "none";

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Eye, EyeOff, Settings, X } from "lucide-react";
 import {
   createChart,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
+  BaselineSeries,
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
@@ -14,7 +16,13 @@ import {
 } from "lightweight-charts";
 import { fetchKlines } from "@/lib/binance/rest";
 import { getBinanceWS } from "@/lib/binance/ws";
-import { ema, rsi, macd, calculateSqueezeMomentum } from "@/lib/indicators";
+import {
+  ema,
+  rsi,
+  macd,
+  calculateSqueezeMomentum,
+  calculateKoncorde,
+} from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
   INDICATOR_COLORS,
@@ -28,6 +36,7 @@ import { MeasureOverlay } from "./MeasureOverlay";
 import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 import { VolumeProfileSettingsDialog } from "./VolumeProfileSettingsDialog";
 import { SqueezeMomentumSettingsDialog } from "./SqueezeMomentumSettingsDialog";
+import { KoncordeSettingsDialog } from "./KoncordeSettingsDialog";
 
 interface MeasurePoint {
   time: number;
@@ -69,6 +78,19 @@ const TV_COLORS = {
   grid: "#1e222d",
 };
 
+/**
+ * Convierte un color #RRGGBB en `rgba(r,g,b,a)`. Solo soporta hex de 6
+ * digitos — suficiente para nuestros defaults; entrada invalida → blanco.
+ */
+function alpha(hex: string, a: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return `rgba(255,255,255,${a})`;
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 interface HoverInfo {
   o: number;
   h: number;
@@ -90,6 +112,10 @@ interface LastValues {
   volume?: number;
   squeezeVal?: number;
   squeezeState?: "on" | "off" | "none";
+  koncordeAzul?: number;
+  koncordeMarron?: number;
+  koncordeVerde?: number;
+  koncordeMedia?: number;
 }
 
 interface PaneOffset {
@@ -115,6 +141,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const sqzDotNoneRef = useRef<ISeriesApi<"Line"> | null>(null);
   const sqzDotOnRef = useRef<ISeriesApi<"Line"> | null>(null);
   const sqzDotOffRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Koncorde — 3 BaselineSeries (areas) + 4 LineSeries (contornos + media)
+  const koncordeVerdeAreaRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const koncordeMarronAreaRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const koncordeAzulAreaRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const koncordeVerdeLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const koncordeMarronLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const koncordeAzulLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const koncordeMediaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
 
@@ -123,11 +157,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const config = useChartStore((s) => s.config);
   const vrvpConfig = useChartStore((s) => s.vrvpConfig);
   const sqzConfig = useChartStore((s) => s.squeezeMomentumConfig);
+  const koncordeConfig = useChartStore((s) => s.koncordeConfig);
   const isMobile = useIsMobile();
   const [vrvpDialogOpen, setVrvpDialogOpen] = useState(false);
   const [sqzDialogOpen, setSqzDialogOpen] = useState(false);
+  const [koncordeDialogOpen, setKoncordeDialogOpen] = useState(false);
   const sqzConfigRef = useRef(sqzConfig);
   sqzConfigRef.current = sqzConfig;
+  const koncordeConfigRef = useRef(koncordeConfig);
+  koncordeConfigRef.current = koncordeConfig;
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -355,6 +393,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
       sqzDotNoneRef.current = null;
       sqzDotOnRef.current = null;
       sqzDotOffRef.current = null;
+      koncordeVerdeAreaRef.current = null;
+      koncordeMarronAreaRef.current = null;
+      koncordeAzulAreaRef.current = null;
+      koncordeVerdeLineRef.current = null;
+      koncordeMarronLineRef.current = null;
+      koncordeAzulLineRef.current = null;
+      koncordeMediaLineRef.current = null;
     };
   }, []);
 
@@ -554,6 +599,91 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.squeezeMomentum, indicators.rsi, indicators.macd]);
 
+  // Koncorde pane — colocado despues de RSI/MACD/Squeeze segun cuales esten activos
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.koncorde && !koncordeVerdeAreaRef.current) {
+      let paneIndex = 1;
+      if (indicators.rsi) paneIndex += 1;
+      if (indicators.macd) paneIndex += 1;
+      if (indicators.squeezeMomentum) paneIndex += 1;
+
+      const cfg = koncordeConfigRef.current;
+      const mkBaseline = (areaColor: string) =>
+        chartRef.current!.addSeries(
+          BaselineSeries,
+          {
+            baseValue: { type: "price", price: 0 },
+            // El contorno lo dan las LineSeries dedicadas — aqui invisible
+            topLineColor: "rgba(0,0,0,0)",
+            bottomLineColor: "rgba(0,0,0,0)",
+            topFillColor1: alpha(areaColor, 0.55),
+            topFillColor2: alpha(areaColor, 0.15),
+            bottomFillColor1: alpha(areaColor, 0.15),
+            bottomFillColor2: alpha(areaColor, 0.05),
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+
+      const verdeArea = mkBaseline(cfg.areaVerde);
+      const marronArea = mkBaseline(cfg.areaMarron);
+      const azulArea = mkBaseline(cfg.areaAzul);
+
+      const mkLine = (color: string) =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color,
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+
+      const verdeLine = mkLine(cfg.lineaVerde);
+      const marronLine = mkLine(cfg.lineaMarron);
+      const azulLine = mkLine(cfg.lineaAzul);
+      const mediaLine = mkLine(cfg.lineaMedia);
+
+      koncordeVerdeAreaRef.current = verdeArea;
+      koncordeMarronAreaRef.current = marronArea;
+      koncordeAzulAreaRef.current = azulArea;
+      koncordeVerdeLineRef.current = verdeLine;
+      koncordeMarronLineRef.current = marronLine;
+      koncordeAzulLineRef.current = azulLine;
+      koncordeMediaLineRef.current = mediaLine;
+
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1.5);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateKoncorde();
+    } else if (!indicators.koncorde && koncordeVerdeAreaRef.current && chartRef.current) {
+      const remove = (s: ISeriesApi<"Baseline"> | ISeriesApi<"Line"> | null) => {
+        if (s) chartRef.current!.removeSeries(s);
+      };
+      remove(koncordeVerdeAreaRef.current);
+      remove(koncordeMarronAreaRef.current);
+      remove(koncordeAzulAreaRef.current);
+      remove(koncordeVerdeLineRef.current);
+      remove(koncordeMarronLineRef.current);
+      remove(koncordeAzulLineRef.current);
+      remove(koncordeMediaLineRef.current);
+      koncordeVerdeAreaRef.current = null;
+      koncordeMarronAreaRef.current = null;
+      koncordeAzulAreaRef.current = null;
+      koncordeVerdeLineRef.current = null;
+      koncordeMarronLineRef.current = null;
+      koncordeAzulLineRef.current = null;
+      koncordeMediaLineRef.current = null;
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indicators.koncorde, indicators.rsi, indicators.macd, indicators.squeezeMomentum]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -571,6 +701,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (sqzDotNoneRef.current) sqzDotNoneRef.current.applyOptions({ visible: v("squeezeMomentum") });
     if (sqzDotOnRef.current) sqzDotOnRef.current.applyOptions({ visible: v("squeezeMomentum") });
     if (sqzDotOffRef.current) sqzDotOffRef.current.applyOptions({ visible: v("squeezeMomentum") });
+    const kv = v("koncorde");
+    koncordeVerdeAreaRef.current?.applyOptions({ visible: kv });
+    koncordeMarronAreaRef.current?.applyOptions({ visible: kv });
+    koncordeAzulAreaRef.current?.applyOptions({ visible: kv });
+    koncordeVerdeLineRef.current?.applyOptions({ visible: kv });
+    koncordeMarronLineRef.current?.applyOptions({ visible: kv });
+    koncordeAzulLineRef.current?.applyOptions({ visible: kv });
+    koncordeMediaLineRef.current?.applyOptions({ visible: kv });
   }, [indicators, hidden]);
 
   // Recompute indicators when config changes (periods)
@@ -606,6 +744,51 @@ export function PriceChart({ symbol, timeframe }: Props) {
     sqzConfig.sqzNone,
     sqzConfig.sqzOn,
     sqzConfig.sqzOff,
+  ]);
+
+  // Recolor + recalculo de Koncorde cuando cambia su config
+  useEffect(() => {
+    const cfg = koncordeConfig;
+    koncordeVerdeAreaRef.current?.applyOptions({
+      topFillColor1: alpha(cfg.areaVerde, 0.55),
+      topFillColor2: alpha(cfg.areaVerde, 0.15),
+      bottomFillColor1: alpha(cfg.areaVerde, 0.15),
+      bottomFillColor2: alpha(cfg.areaVerde, 0.05),
+    });
+    koncordeMarronAreaRef.current?.applyOptions({
+      topFillColor1: alpha(cfg.areaMarron, 0.55),
+      topFillColor2: alpha(cfg.areaMarron, 0.15),
+      bottomFillColor1: alpha(cfg.areaMarron, 0.15),
+      bottomFillColor2: alpha(cfg.areaMarron, 0.05),
+    });
+    koncordeAzulAreaRef.current?.applyOptions({
+      topFillColor1: alpha(cfg.areaAzul, 0.55),
+      topFillColor2: alpha(cfg.areaAzul, 0.15),
+      bottomFillColor1: alpha(cfg.areaAzul, 0.15),
+      bottomFillColor2: alpha(cfg.areaAzul, 0.05),
+    });
+    koncordeVerdeLineRef.current?.applyOptions({ color: cfg.lineaVerde });
+    koncordeMarronLineRef.current?.applyOptions({ color: cfg.lineaMarron });
+    koncordeAzulLineRef.current?.applyOptions({ color: cfg.lineaAzul });
+    koncordeMediaLineRef.current?.applyOptions({ color: cfg.lineaMedia });
+    updateKoncorde();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    koncordeConfig.m,
+    koncordeConfig.bollLength,
+    koncordeConfig.bollMult,
+    koncordeConfig.mfiLength,
+    koncordeConfig.rsiLength,
+    koncordeConfig.stochLength,
+    koncordeConfig.stochSmooth,
+    koncordeConfig.rangeLookback,
+    koncordeConfig.areaVerde,
+    koncordeConfig.areaMarron,
+    koncordeConfig.areaAzul,
+    koncordeConfig.lineaVerde,
+    koncordeConfig.lineaMarron,
+    koncordeConfig.lineaAzul,
+    koncordeConfig.lineaMedia,
   ]);
 
   // Sync price lines from store to the candle series
@@ -791,6 +974,50 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }));
   }
 
+  function updateKoncorde() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !koncordeVerdeAreaRef.current) return;
+    const cfg = koncordeConfigRef.current;
+    const pts = calculateKoncorde(c, {
+      m: cfg.m,
+      bollLength: cfg.bollLength,
+      bollMult: cfg.bollMult,
+      mfiLength: cfg.mfiLength,
+      rsiLength: cfg.rsiLength,
+      stochLength: cfg.stochLength,
+      stochSmooth: cfg.stochSmooth,
+      rangeLookback: cfg.rangeLookback,
+    });
+
+    const verdeData: { time: UTCTimestamp; value: number }[] = [];
+    const marronData: { time: UTCTimestamp; value: number }[] = [];
+    const azulData: { time: UTCTimestamp; value: number }[] = [];
+    const mediaData: { time: UTCTimestamp; value: number }[] = [];
+    for (const p of pts) {
+      const t = p.time as UTCTimestamp;
+      if (p.verde !== null) verdeData.push({ time: t, value: p.verde });
+      if (p.marron !== null) marronData.push({ time: t, value: p.marron });
+      if (p.azul !== null) azulData.push({ time: t, value: p.azul });
+      if (p.media !== null) mediaData.push({ time: t, value: p.media });
+    }
+    koncordeVerdeAreaRef.current.setData(verdeData);
+    koncordeMarronAreaRef.current?.setData(marronData);
+    koncordeAzulAreaRef.current?.setData(azulData);
+    koncordeVerdeLineRef.current?.setData(verdeData);
+    koncordeMarronLineRef.current?.setData(marronData);
+    koncordeAzulLineRef.current?.setData(azulData);
+    koncordeMediaLineRef.current?.setData(mediaData);
+
+    const last = pts.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      koncordeAzul: last?.azul ?? undefined,
+      koncordeMarron: last?.marron ?? undefined,
+      koncordeVerde: last?.verde ?? undefined,
+      koncordeMedia: last?.media ?? undefined,
+    }));
+  }
+
   // Load historical data + subscribe live
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -825,6 +1052,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateRSI();
         updateMACD();
         updateSqueezeMomentum();
+        updateKoncorde();
         // Tras el cambio de simbolo/timeframe forzamos auto-escala del eje de
         // precio y encajamos el rango temporal. Si no, el eje conservaria los
         // limites del simbolo anterior y las velas nuevas caerian fuera del
@@ -895,6 +1123,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
             updateRSI();
             updateMACD();
             updateSqueezeMomentum();
+            updateKoncorde();
             const prev = arr[arr.length - 2] ?? lastCandle;
             setLastPrice({
               value: k.close,
@@ -928,6 +1157,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const macdPaneIdx = indicators.rsi ? 2 : 1;
   const sqzPaneIdx =
     1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
+  const koncordePaneIdx =
+    1 +
+    (indicators.rsi ? 1 : 0) +
+    (indicators.macd ? 1 : 0) +
+    (indicators.squeezeMomentum ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -1197,6 +1431,63 @@ export function PriceChart({ symbol, timeframe }: Props) {
       <SqueezeMomentumSettingsDialog
         open={sqzDialogOpen}
         onOpenChange={setSqzDialogOpen}
+      />
+
+      {/* Koncorde pane label — pill multi-color con los 4 valores */}
+      {indicators.koncorde && paneOffsets[koncordePaneIdx] && (
+        <div
+          style={{ top: paneOffsets[koncordePaneIdx].top + 6, left: isMobile ? 6 : 12 }}
+          className="pointer-events-none absolute z-10 flex items-center gap-1.5"
+        >
+          <div className="pointer-events-auto flex shrink-0 items-center gap-2 rounded bg-tv-panel/95 px-2 py-0.5 text-[11px] shadow-sm ring-1 ring-tv-border backdrop-blur">
+            <span className="font-medium text-tv-text">Koncorde</span>
+            {!isMobile && (
+              <div className="flex items-center gap-2 tabular-nums">
+                <span style={{ color: koncordeConfig.lineaAzul }}>
+                  A {lastValues.koncordeAzul !== undefined ? lastValues.koncordeAzul.toFixed(1) : "—"}
+                </span>
+                <span style={{ color: koncordeConfig.lineaMarron }}>
+                  M {lastValues.koncordeMarron !== undefined ? lastValues.koncordeMarron.toFixed(1) : "—"}
+                </span>
+                <span style={{ color: koncordeConfig.lineaVerde }}>
+                  V {lastValues.koncordeVerde !== undefined ? lastValues.koncordeVerde.toFixed(1) : "—"}
+                </span>
+                <span style={{ color: koncordeConfig.lineaMedia }}>
+                  μ {lastValues.koncordeMedia !== undefined ? lastValues.koncordeMedia.toFixed(1) : "—"}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={() => toggleHidden("koncorde")}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+              aria-label={hidden.koncorde ? "Mostrar" : "Ocultar"}
+              title={hidden.koncorde ? "Mostrar" : "Ocultar"}
+            >
+              {hidden.koncorde ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            </button>
+            <button
+              onClick={() => setKoncordeDialogOpen(true)}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+              aria-label="Configurar"
+              title="Configurar"
+            >
+              <Settings className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => removeIndicator("koncorde")}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-red"
+              aria-label="Eliminar"
+              title="Eliminar"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <KoncordeSettingsDialog
+        open={koncordeDialogOpen}
+        onOpenChange={setKoncordeDialogOpen}
       />
     </div>
   );

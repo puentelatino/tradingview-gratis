@@ -12,7 +12,45 @@ export type IndicatorKey =
   | "macd"
   | "volume"
   | "vrvp"
-  | "squeezeMomentum";
+  | "squeezeMomentum"
+  | "koncorde";
+
+export interface KoncordeConfig {
+  m: number;
+  bollLength: number;
+  bollMult: number;
+  mfiLength: number;
+  rsiLength: number;
+  stochLength: number;
+  stochSmooth: number;
+  rangeLookback: number;
+  /** Colores: areas (verde/marron/azul) + lineas contorno + linea media */
+  areaVerde: string;
+  areaMarron: string;
+  areaAzul: string;
+  lineaVerde: string;
+  lineaMarron: string;
+  lineaAzul: string;
+  lineaMedia: string;
+}
+
+export const DEFAULT_KONCORDE_CONFIG: KoncordeConfig = {
+  m: 15,
+  bollLength: 25,
+  bollMult: 2.0,
+  mfiLength: 14,
+  rsiLength: 14,
+  stochLength: 21,
+  stochSmooth: 3,
+  rangeLookback: 90,
+  areaVerde: "#66FF66",
+  areaMarron: "#FFCC99",
+  areaAzul: "#00FFFF",
+  lineaVerde: "#006600",
+  lineaMarron: "#800000",
+  lineaAzul: "#000066",
+  lineaMedia: "#FF0000",
+};
 
 export interface SqueezeMomentumConfig {
   bbLength: number;
@@ -113,6 +151,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   volume: "#787b86",
   vrvp: "#26a69a",
   squeezeMomentum: "#2196f3",
+  koncorde: "#66ff66",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -139,6 +178,7 @@ interface ChartState {
   config: IndicatorConfig;
   vrvpConfig: VrvpConfig;
   squeezeMomentumConfig: SqueezeMomentumConfig;
+  koncordeConfig: KoncordeConfig;
   watchlist: string[];
 
   // Ephemeral UI state (not persisted)
@@ -159,6 +199,8 @@ interface ChartState {
   resetVrvpConfig: () => void;
   setSqueezeMomentumConfig: (patch: Partial<SqueezeMomentumConfig>) => void;
   resetSqueezeMomentumConfig: () => void;
+  setKoncordeConfig: (patch: Partial<KoncordeConfig>) => void;
+  resetKoncordeConfig: () => void;
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
@@ -182,6 +224,7 @@ export const useChartStore = create<ChartState>()(
         volume: true,
         vrvp: false,
         squeezeMomentum: false,
+        koncorde: false,
       },
       hidden: {
         ema20: false,
@@ -192,10 +235,12 @@ export const useChartStore = create<ChartState>()(
         volume: false,
         vrvp: false,
         squeezeMomentum: false,
+        koncorde: false,
       },
       config: { ...DEFAULT_CONFIG },
       vrvpConfig: { ...DEFAULT_VRVP_CONFIG },
       squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG },
+      koncordeConfig: { ...DEFAULT_KONCORDE_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
       tool: "cursor",
       priceLines: [],
@@ -228,6 +273,9 @@ export const useChartStore = create<ChartState>()(
         set((s) => ({ squeezeMomentumConfig: { ...s.squeezeMomentumConfig, ...patch } })),
       resetSqueezeMomentumConfig: () =>
         set({ squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG } }),
+      setKoncordeConfig: (patch) =>
+        set((s) => ({ koncordeConfig: { ...s.koncordeConfig, ...patch } })),
+      resetKoncordeConfig: () => set({ koncordeConfig: { ...DEFAULT_KONCORDE_CONFIG } }),
       addToWatchlist: (s) =>
         set((state) => ({
           watchlist: state.watchlist.includes(s)
@@ -272,6 +320,7 @@ export const useChartStore = create<ChartState>()(
         config: s.config,
         vrvpConfig: s.vrvpConfig,
         squeezeMomentumConfig: s.squeezeMomentumConfig,
+        koncordeConfig: s.koncordeConfig,
         watchlist: s.watchlist,
       }),
     },
