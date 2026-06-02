@@ -229,20 +229,47 @@ export function PriceChart({ symbol, timeframe }: Props) {
       },
       rightPriceScale: {
         borderColor: TV_COLORS.border,
+        borderVisible: true,
         textColor: TV_COLORS.textMuted,
+        // autoScale se mantiene activa pero con margenes fijos para que el
+        // eje NO "salte" en cada frame al hacer pan: lightweight-charts solo
+        // recalcula la escala cuando los valores extremos cambian, no en
+        // cada movimiento.
+        autoScale: true,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
         borderColor: TV_COLORS.border,
+        borderVisible: true,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 12,
-        barSpacing: 8,
+        barSpacing: 6,
+        minBarSpacing: 0.5,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        // Mantener el rango visible cuando cambia el tamano del viewport
+        // (rotacion movil, abrir/cerrar sheet, etc.) en lugar de reencajar.
+        lockVisibleTimeRangeOnResize: true,
+        // Default: nuevas velas WS desplazan el rango si esta pegado a la
+        // derecha. Lo dejamos true (no se desactiva) para streaming suave.
       },
-      // En móvil queremos que el chart no capture el gesto vertical de la
-      // página (pan vertical = scroll de la página, no zoom del eje de precio).
-      // El drag horizontal y el pinch siguen funcionando.
+      // Gestos: TradingView-style en movil y desktop.
+      //   horzTouchDrag: pan horizontal con un dedo en el area del chart.
+      //   vertTouchDrag: pan vertical con un dedo (ahora a true; en movil
+      //     el chart ocupa toda la pantalla y no hay scroll de pagina que
+      //     atrapar).
       handleScroll: {
-        vertTouchDrag: false,
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
       },
       autoSize: true,
     });
