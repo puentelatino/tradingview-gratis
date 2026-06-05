@@ -119,6 +119,7 @@ Este repo es la base de la serie **"TradingView Gratis"**:
 2. 🔜 **Video 2 — Alertas**: Supabase + Telegram bot
 3. 🔜 **Video 3 — Indicadores AI**: SuperTrend, Ichimoku, custom con Claude
 4. 🔜 **Video 4 — Bot que opera**: API privada Binance + ejecución
+5. <!-- redeploy -->
 
 ## 📄 Licencia
 
