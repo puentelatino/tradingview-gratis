@@ -156,6 +156,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const hidden = useChartStore((s) => s.hidden);
   const config = useChartStore((s) => s.config);
   const vrvpConfig = useChartStore((s) => s.vrvpConfig);
+  const indicatorColors = useChartStore((s) => s.indicatorColors);
+  const colorsRef = useRef(indicatorColors);
+  colorsRef.current = indicatorColors;
   const sqzConfig = useChartStore((s) => s.squeezeMomentumConfig);
   const koncordeConfig = useChartStore((s) => s.koncordeConfig);
   const isMobile = useIsMobile();
@@ -287,19 +290,19 @@ export function PriceChart({ symbol, timeframe }: Props) {
     });
 
     ema20Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema20,
+      color: colorsRef.current.ema20,
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
     });
     ema50Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema50,
+      color: colorsRef.current.ema50,
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
     });
     ema200Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema200,
+      color: colorsRef.current.ema200,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
@@ -447,10 +450,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
       );
       v.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
       volumeSeriesRef.current = v;
+      const cUp = colorsRef.current.volumeUp;
+      const cDn = colorsRef.current.volumeDown;
       const data = candlesRef.current.map((k) => ({
         time: k.time as UTCTimestamp,
         value: k.volume,
-        color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+        color: k.close >= k.open ? `${cUp}66` : `${cDn}66`,
       }));
       v.setData(data);
     } else if (!indicators.volume && volumeSeriesRef.current && chartRef.current) {
@@ -468,7 +473,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const r = chartRef.current.addSeries(
         LineSeries,
         {
-          color: INDICATOR_COLORS.rsi,
+          color: colorsRef.current.rsi,
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -525,7 +530,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const m = chartRef.current.addSeries(
         LineSeries,
         {
-          color: INDICATOR_COLORS.macd,
+          color: colorsRef.current.macdLine,
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -535,7 +540,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const s = chartRef.current.addSeries(
         LineSeries,
         {
-          color: TV_COLORS.yellow,
+          color: colorsRef.current.macdSignal,
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -751,6 +756,44 @@ export function PriceChart({ symbol, timeframe }: Props) {
     updateMACD();
   }, [config.macdFast, config.macdSlow, config.macdSignal]);
 
+  // Aplicar cambios de color en vivo a las series ya creadas. Volume y MACD
+  // histograma usan color por punto, asi que requieren reasignar setData
+  // (updateMACD para MACD; para volumen reconstruimos la serie aqui).
+  useEffect(() => {
+    ema20Ref.current?.applyOptions({ color: indicatorColors.ema20 });
+    ema50Ref.current?.applyOptions({ color: indicatorColors.ema50 });
+    ema200Ref.current?.applyOptions({ color: indicatorColors.ema200 });
+    rsiRef.current?.applyOptions({ color: indicatorColors.rsi });
+    macdRef.current?.applyOptions({ color: indicatorColors.macdLine });
+    macdSignalRef.current?.applyOptions({ color: indicatorColors.macdSignal });
+    // Repintar barras de volumen
+    if (volumeSeriesRef.current && candlesRef.current.length > 0) {
+      const cUp = indicatorColors.volumeUp;
+      const cDn = indicatorColors.volumeDown;
+      volumeSeriesRef.current.setData(
+        candlesRef.current.map((k) => ({
+          time: k.time as UTCTimestamp,
+          value: k.volume,
+          color: k.close >= k.open ? `${cUp}66` : `${cDn}66`,
+        })),
+      );
+    }
+    // Repintar histograma MACD
+    if (macdHistRef.current) updateMACD();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    indicatorColors.ema20,
+    indicatorColors.ema50,
+    indicatorColors.ema200,
+    indicatorColors.rsi,
+    indicatorColors.macdLine,
+    indicatorColors.macdSignal,
+    indicatorColors.macdHistUp,
+    indicatorColors.macdHistDown,
+    indicatorColors.volumeUp,
+    indicatorColors.volumeDown,
+  ]);
+
   // Recolorea las series de squeeze y recalcula al cambiar params
   useEffect(() => {
     sqzDotNoneRef.current?.applyOptions({ color: sqzConfig.sqzNone });
@@ -930,11 +973,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
     macdSignalRef.current?.setData(
       m.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal })),
     );
+    const hUp = colorsRef.current.macdHistUp;
+    const hDn = colorsRef.current.macdHistDown;
     macdHistRef.current?.setData(
       m.map((p) => ({
         time: p.time as UTCTimestamp,
         value: p.histogram,
-        color: p.histogram >= 0 ? `${TV_COLORS.green}80` : `${TV_COLORS.red}80`,
+        color: p.histogram >= 0 ? `${hUp}80` : `${hDn}80`,
       })),
     );
     const last = m.at(-1);
@@ -1067,11 +1112,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
           );
         }
         if (volumeSeriesRef.current) {
+          const cUp = colorsRef.current.volumeUp;
+          const cDn = colorsRef.current.volumeDown;
           volumeSeriesRef.current.setData(
             klines.map((k) => ({
               time: k.time as UTCTimestamp,
               value: k.volume,
-              color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+              color: k.close >= k.open ? `${cUp}66` : `${cDn}66`,
             })),
           );
         }
@@ -1140,10 +1187,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
               close: k.close,
             });
             if (volumeSeriesRef.current) {
+              const cUp = colorsRef.current.volumeUp;
+              const cDn = colorsRef.current.volumeDown;
               volumeSeriesRef.current.update({
                 time: k.time as UTCTimestamp,
                 value: k.volume,
-                color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+                color: k.close >= k.open ? `${cUp}66` : `${cDn}66`,
               });
             }
             updateEMAs();
@@ -1333,7 +1382,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
               compact={isMobile}
               name={`EMA ${config.ema20}`}
               value={lastValues.ema20 !== undefined ? formatPrice(lastValues.ema20) : undefined}
-              color={INDICATOR_COLORS.ema20}
+              color={indicatorColors.ema20}
               hidden={hidden.ema20}
               onToggleHide={() => toggleHidden("ema20")}
               onSettings={() => setSettingsTarget("ema20")}
@@ -1345,7 +1394,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
               compact={isMobile}
               name={`EMA ${config.ema50}`}
               value={lastValues.ema50 !== undefined ? formatPrice(lastValues.ema50) : undefined}
-              color={INDICATOR_COLORS.ema50}
+              color={indicatorColors.ema50}
               hidden={hidden.ema50}
               onToggleHide={() => toggleHidden("ema50")}
               onSettings={() => setSettingsTarget("ema50")}
@@ -1357,7 +1406,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
               compact={isMobile}
               name={`EMA ${config.ema200}`}
               value={lastValues.ema200 !== undefined ? formatPrice(lastValues.ema200) : undefined}
-              color={INDICATOR_COLORS.ema200}
+              color={indicatorColors.ema200}
               hidden={hidden.ema200}
               onToggleHide={() => toggleHidden("ema200")}
               onSettings={() => setSettingsTarget("ema200")}
@@ -1369,7 +1418,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
               compact={isMobile}
               name="Vol"
               value={lastValues.volume !== undefined ? formatVolume(lastValues.volume) : undefined}
-              color={INDICATOR_COLORS.volume}
+              color={indicatorColors.volumeUp}
               hidden={hidden.volume}
               onToggleHide={() => toggleHidden("volume")}
               onSettings={() => setSettingsTarget("volume")}
@@ -1400,7 +1449,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
             compact={isMobile}
             name={`RSI ${config.rsi}`}
             value={lastValues.rsi !== undefined ? lastValues.rsi.toFixed(2) : undefined}
-            color={INDICATOR_COLORS.rsi}
+            color={indicatorColors.rsi}
             hidden={hidden.rsi}
             onToggleHide={() => toggleHidden("rsi")}
             onSettings={() => setSettingsTarget("rsi")}
@@ -1423,7 +1472,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
                 ? `${lastValues.macd.toFixed(2)} / ${(lastValues.macdSignal ?? 0).toFixed(2)}`
                 : undefined
             }
-            color={INDICATOR_COLORS.macd}
+            color={indicatorColors.macdLine}
             hidden={hidden.macd}
             onToggleHide={() => toggleHidden("macd")}
             onSettings={() => setSettingsTarget("macd")}

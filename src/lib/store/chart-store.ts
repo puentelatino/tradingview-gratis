@@ -154,6 +154,45 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   koncorde: "#66ff66",
 };
 
+/**
+ * Colores editables por el usuario de los indicadores antiguos (EMA, RSI,
+ * MACD, Volume). Persistido en localStorage. Los indicadores nuevos
+ * (VRVP/Squeeze/Koncorde) tienen sus propios objetos de config con colores.
+ *
+ * Para resetear, se usan los valores de DEFAULT_INDICATOR_COLORS.
+ */
+export interface IndicatorColors {
+  ema20: string;
+  ema50: string;
+  ema200: string;
+  rsi: string;
+  /** Linea MACD */
+  macdLine: string;
+  /** Linea Signal del MACD */
+  macdSignal: string;
+  /** Histograma MACD para barras positivas */
+  macdHistUp: string;
+  /** Histograma MACD para barras negativas */
+  macdHistDown: string;
+  /** Barras de volumen alcistas */
+  volumeUp: string;
+  /** Barras de volumen bajistas */
+  volumeDown: string;
+}
+
+export const DEFAULT_INDICATOR_COLORS: IndicatorColors = {
+  ema20: INDICATOR_COLORS.ema20,
+  ema50: INDICATOR_COLORS.ema50,
+  ema200: INDICATOR_COLORS.ema200,
+  rsi: INDICATOR_COLORS.rsi,
+  macdLine: "#2962ff",
+  macdSignal: "#ffb74d",
+  macdHistUp: "#26a69a",
+  macdHistDown: "#ef5350",
+  volumeUp: "#26a69a",
+  volumeDown: "#ef5350",
+};
+
 export const DEFAULT_WATCHLIST = [
   "BTCUSDT",
   "ETHUSDT",
@@ -176,6 +215,8 @@ interface ChartState {
   hidden: Record<IndicatorKey, boolean>;
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
+  /** Colores editables de EMA/RSI/MACD/Volume */
+  indicatorColors: IndicatorColors;
   vrvpConfig: VrvpConfig;
   squeezeMomentumConfig: SqueezeMomentumConfig;
   koncordeConfig: KoncordeConfig;
@@ -195,6 +236,11 @@ interface ChartState {
   removeIndicator: (key: IndicatorKey) => void;
   toggleHidden: (key: IndicatorKey) => void;
   setConfig: (patch: Partial<IndicatorConfig>) => void;
+  setIndicatorColor: <K extends keyof IndicatorColors>(
+    key: K,
+    color: IndicatorColors[K],
+  ) => void;
+  resetIndicatorColors: () => void;
   setVrvpConfig: (patch: Partial<VrvpConfig>) => void;
   resetVrvpConfig: () => void;
   setSqueezeMomentumConfig: (patch: Partial<SqueezeMomentumConfig>) => void;
@@ -238,6 +284,7 @@ export const useChartStore = create<ChartState>()(
         koncorde: false,
       },
       config: { ...DEFAULT_CONFIG },
+      indicatorColors: { ...DEFAULT_INDICATOR_COLORS },
       vrvpConfig: { ...DEFAULT_VRVP_CONFIG },
       squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG },
       koncordeConfig: { ...DEFAULT_KONCORDE_CONFIG },
@@ -266,6 +313,12 @@ export const useChartStore = create<ChartState>()(
         set((s) => ({ hidden: { ...s.hidden, [key]: !s.hidden[key] } })),
       setConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
+      setIndicatorColor: (key, color) =>
+        set((s) => ({
+          indicatorColors: { ...s.indicatorColors, [key]: color },
+        })),
+      resetIndicatorColors: () =>
+        set({ indicatorColors: { ...DEFAULT_INDICATOR_COLORS } }),
       setVrvpConfig: (patch) =>
         set((s) => ({ vrvpConfig: { ...s.vrvpConfig, ...patch } })),
       resetVrvpConfig: () => set({ vrvpConfig: { ...DEFAULT_VRVP_CONFIG } }),
@@ -312,17 +365,54 @@ export const useChartStore = create<ChartState>()(
     }),
     {
       name: "tv-gratis-chart-state",
+      version: 1,
       partialize: (s) => ({
         symbol: s.symbol,
         timeframe: s.timeframe,
         indicators: s.indicators,
         hidden: s.hidden,
         config: s.config,
+        indicatorColors: s.indicatorColors,
         vrvpConfig: s.vrvpConfig,
         squeezeMomentumConfig: s.squeezeMomentumConfig,
         koncordeConfig: s.koncordeConfig,
         watchlist: s.watchlist,
       }),
+      // Deep merge: blinda contra evoluciones del schema. Cuando se anaden
+      // nuevas claves al estado (p. ej. un nuevo subcampo en vrvpConfig),
+      // los usuarios con localStorage previo conservan lo suyo y reciben
+      // los defaults para los campos nuevos en lugar de quedar undefined.
+      merge: (persisted, current) =>
+        deepMerge(current, persisted as Partial<ChartState>) as ChartState,
     },
   ),
 );
+
+/**
+ * Deep merge inmutable: campos del segundo argumento sobreescriben a los del
+ * primero. Objetos planos (no arrays, no Date, no Map, no Set, no funciones)
+ * se fusionan recursivamente; cualquier otro tipo (arrays incluidos) se
+ * reemplaza tal cual viene del persisted.
+ */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== "object") return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMerge<T>(base: T, patch: unknown): T {
+  if (!isPlainObject(base) || !isPlainObject(patch)) {
+    return patch === undefined ? base : (patch as T);
+  }
+  const out: Record<string, unknown> = { ...base };
+  for (const key of Object.keys(patch)) {
+    const b = (base as Record<string, unknown>)[key];
+    const p = patch[key];
+    if (isPlainObject(b) && isPlainObject(p)) {
+      out[key] = deepMerge(b, p);
+    } else if (p !== undefined) {
+      out[key] = p;
+    }
+  }
+  return out as T;
+}
