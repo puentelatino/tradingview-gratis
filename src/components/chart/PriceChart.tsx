@@ -401,9 +401,75 @@ export function PriceChart({ symbol, timeframe }: Props) {
     ro.observe(containerRef.current);
     recomputePaneOffsets();
 
+    // ─── Interceptor de pinch sobre los ejes ──────────────────────────────
+    // lightweight-charts no permite restringir el pinch al area de velas.
+    // Atrapamos los touchstart con 2 dedos: si alguno cae sobre el eje de
+    // precio (derecha) o sobre el eje de tiempo (abajo), bloqueamos todo el
+    // gesto multi-touch (stop + preventDefault) hasta que se levanten los
+    // dedos. Los gestos de un dedo (pan, drag sobre ejes, doble tap) pasan
+    // siempre — solo nos metemos cuando event.touches.length === 2.
+    const containerEl = containerRef.current;
+    let blockMultiTouch = false;
+
+    function isOnAxis(clientX: number, clientY: number): boolean {
+      if (!containerEl) return false;
+      const rect = containerEl.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      let rightAxisW = 0;
+      let timeAxisH = 0;
+      try {
+        rightAxisW = chart.priceScale("right").width();
+      } catch {}
+      try {
+        timeAxisH = chart.timeScale().height();
+      } catch {}
+      const chartAreaRight = rect.width - rightAxisW;
+      const chartAreaBottom = rect.height - timeAxisH;
+      // Sobre el eje de precio derecho o el eje de tiempo inferior
+      return x >= chartAreaRight || y >= chartAreaBottom;
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length !== 2) {
+        blockMultiTouch = false;
+        return;
+      }
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      if (isOnAxis(t1.clientX, t1.clientY) || isOnAxis(t2.clientX, t2.clientY)) {
+        blockMultiTouch = true;
+        e.stopPropagation();
+        e.preventDefault();
+      } else {
+        blockMultiTouch = false;
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (blockMultiTouch && e.touches.length >= 2) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) blockMultiTouch = false;
+    }
+
+    const touchOpts: AddEventListenerOptions = { capture: true, passive: false };
+    containerEl.addEventListener("touchstart", onTouchStart, touchOpts);
+    containerEl.addEventListener("touchmove", onTouchMove, touchOpts);
+    containerEl.addEventListener("touchend", onTouchEnd, touchOpts);
+    containerEl.addEventListener("touchcancel", onTouchEnd, touchOpts);
+
     return () => {
       chart.timeScale().unsubscribeVisibleTimeRangeChange(tsRangeHandler);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(logicalRangeHandler);
+      containerEl.removeEventListener("touchstart", onTouchStart, touchOpts);
+      containerEl.removeEventListener("touchmove", onTouchMove, touchOpts);
+      containerEl.removeEventListener("touchend", onTouchEnd, touchOpts);
+      containerEl.removeEventListener("touchcancel", onTouchEnd, touchOpts);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
