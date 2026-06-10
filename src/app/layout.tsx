@@ -61,6 +61,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Prohibir el zoom nativo del navegador: el pinch debe ir SOLO al chart
+  // (lightweight-charts), nunca escalar la pagina entera. Aceptable en una
+  // app-herramienta tipo PWA (mismo patron que TradingView o Google Maps).
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
   themeColor: "#131722",
 };

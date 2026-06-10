@@ -98,6 +98,13 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /* Refuerzo del userScalable=false del viewport: iOS Safari ignora la
+       meta pero respeta touch-action. "manipulation" permite tap y pan pero
+       bloquea double-tap-zoom y pinch-zoom nativos de pagina. */
+    touch-action: manipulation;
+    /* Sin pull-to-refresh ni rebote de scroll accidental: en una app de
+       trading un refresh involuntario en mitad de un gesto es critico. */
+    overscroll-behavior: none;
   }
   html {
     @apply font-sans;

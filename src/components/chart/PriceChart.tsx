@@ -1353,7 +1353,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
   return (
     <div className="relative h-full w-full">
-      <div ref={containerRef} className="h-full w-full" />
+      {/* touch-action none: todos los gestos touch dentro del chart los
+          gestiona lightweight-charts (pan, pinch), nunca el navegador */}
+      <div ref={containerRef} className="h-full w-full [touch-action:none]" />
       {measureRender}
 
       {/* Volume Profile (VRVP) overlay sobre el pane principal */}
