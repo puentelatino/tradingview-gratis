@@ -16,6 +16,9 @@ export type IndicatorKey =
   | "koncorde"
   | "dmiAdx";
 
+/** Donde se dibuja el DMI/ADX: pane propio o compartiendo el del Squeeze. */
+export type DmiAdxOverlay = "own" | "squeeze";
+
 export interface DmiAdxConfig {
   adxLength: number;
   diLength: number;
@@ -25,6 +28,7 @@ export interface DmiAdxConfig {
   minusDIColor: string;
   keyLevelColor: string;
   keyLevelDashed: boolean;
+  overlayOn: DmiAdxOverlay;
 }
 
 export const DEFAULT_DMI_ADX_CONFIG: DmiAdxConfig = {
@@ -36,6 +40,7 @@ export const DEFAULT_DMI_ADX_CONFIG: DmiAdxConfig = {
   minusDIColor: "#9E9E9E",
   keyLevelColor: "#FFFFFF",
   keyLevelDashed: true,
+  overlayOn: "own",
 };
 
 export interface KoncordeConfig {

@@ -159,6 +159,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const dmiAdxPlusRef = useRef<ISeriesApi<"Line"> | null>(null);
   const dmiAdxMinusRef = useRef<ISeriesApi<"Line"> | null>(null);
   const dmiAdxKeyRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Clave de la ubicacion actual de las series DMI ("paneIndex:scaleId").
+  // Sirve para detectar cuando hay que destruir+recrear en otra ubicacion.
+  const dmiPlacementRef = useRef<string | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
 
@@ -800,46 +803,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.koncorde, indicators.rsi, indicators.macd, indicators.squeezeMomentum]);
 
-  // DMI/ADX pane — colocado tras RSI/MACD/Squeeze/Koncorde segun cuales esten activos
+  // DMI/ADX pane — soporta pane propio o superposicion sobre el del Squeeze.
   useEffect(() => {
     if (!chartRef.current) return;
-    if (indicators.dmiAdx && !dmiAdxAdxRef.current) {
-      let paneIndex = 1;
-      if (indicators.rsi) paneIndex += 1;
-      if (indicators.macd) paneIndex += 1;
-      if (indicators.squeezeMomentum) paneIndex += 1;
-      if (indicators.koncorde) paneIndex += 1;
 
-      const cfg = dmiAdxConfigRef.current;
-      const mkLine = (color: string, width: 1 | 2, dashed = false) =>
-        chartRef.current!.addSeries(
-          LineSeries,
-          {
-            color,
-            lineWidth: width,
-            lineStyle: dashed ? 2 : 0, // 2 = Dashed en lightweight-charts
-            priceLineVisible: false,
-            lastValueVisible: false,
-          },
-          paneIndex,
-        );
-
-      const adxLine = mkLine(cfg.adxColor, 2);
-      const plusLine = mkLine(cfg.plusDIColor, 1);
-      const minusLine = mkLine(cfg.minusDIColor, 1);
-      const keyLine = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
-
-      dmiAdxAdxRef.current = adxLine;
-      dmiAdxPlusRef.current = plusLine;
-      dmiAdxMinusRef.current = minusLine;
-      dmiAdxKeyRef.current = keyLine;
-
-      try {
-        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
-        chartRef.current.panes()[0]?.setStretchFactor(3);
-      } catch {}
-      updateDmiAdx();
-    } else if (!indicators.dmiAdx && dmiAdxAdxRef.current && chartRef.current) {
+    function teardownDmi() {
       const remove = (s: ISeriesApi<"Line"> | null) => {
         if (s) chartRef.current!.removeSeries(s);
       };
@@ -851,7 +819,84 @@ export function PriceChart({ symbol, timeframe }: Props) {
       dmiAdxPlusRef.current = null;
       dmiAdxMinusRef.current = null;
       dmiAdxKeyRef.current = null;
+      dmiPlacementRef.current = null;
     }
+
+    if (!indicators.dmiAdx) {
+      if (dmiAdxAdxRef.current) teardownDmi();
+      requestAnimationFrame(() => recomputePaneOffsets());
+      return;
+    }
+
+    // Ubicacion deseada. Si overlayOn === 'squeeze' Y el Squeeze esta activo,
+    // compartimos su pane (1 + rsi + macd) con un priceScaleId propio ('dmi')
+    // para no aplastar la escala del histograma. Si no, pane propio dinamico.
+    const overlay =
+      dmiAdxConfigRef.current.overlayOn === "squeeze" && indicators.squeezeMomentum;
+    let paneIndex: number;
+    let scaleId: string | undefined;
+    if (overlay) {
+      paneIndex = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
+      scaleId = "dmi";
+    } else {
+      paneIndex =
+        1 +
+        (indicators.rsi ? 1 : 0) +
+        (indicators.macd ? 1 : 0) +
+        (indicators.squeezeMomentum ? 1 : 0) +
+        (indicators.koncorde ? 1 : 0);
+      scaleId = undefined; // escala por defecto del pane propio
+    }
+    const placementKey = `${paneIndex}:${scaleId ?? "right"}`;
+
+    // Si ya esta en la ubicacion correcta, nada que hacer (los colores/datos
+    // los gestionan otros effects).
+    if (dmiAdxAdxRef.current && dmiPlacementRef.current === placementKey) {
+      requestAnimationFrame(() => recomputePaneOffsets());
+      return;
+    }
+
+    // Reubicacion: destruir lo viejo y reconstruir en el sitio nuevo.
+    if (dmiAdxAdxRef.current) teardownDmi();
+
+    const cfg = dmiAdxConfigRef.current;
+    const mkLine = (color: string, width: 1 | 2, dashed = false) =>
+      chartRef.current!.addSeries(
+        LineSeries,
+        {
+          color,
+          lineWidth: width,
+          lineStyle: dashed ? 2 : 0, // 2 = Dashed
+          priceLineVisible: false,
+          lastValueVisible: false,
+          ...(scaleId ? { priceScaleId: scaleId } : {}),
+        },
+        paneIndex,
+      );
+
+    dmiAdxAdxRef.current = mkLine(cfg.adxColor, 2);
+    dmiAdxPlusRef.current = mkLine(cfg.plusDIColor, 1);
+    dmiAdxMinusRef.current = mkLine(cfg.minusDIColor, 1);
+    dmiAdxKeyRef.current = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
+    dmiPlacementRef.current = placementKey;
+
+    // Cuando comparte pane, la escala 'dmi' (0-100) necesita margenes propios
+    // para convivir con el histograma del Squeeze sin deformarse.
+    if (overlay) {
+      try {
+        dmiAdxAdxRef.current.priceScale().applyOptions({
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
+      } catch {}
+    } else {
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+    }
+
+    // setData inmediato tras recrear → sin parpadeo de pane vacio
+    updateDmiAdx();
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -860,6 +905,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     indicators.macd,
     indicators.squeezeMomentum,
     indicators.koncorde,
+    dmiAdxConfig.overlayOn,
   ]);
 
   // Visibility — eye toggle (hidden state) + enabled state combined
@@ -1448,12 +1494,17 @@ export function PriceChart({ symbol, timeframe }: Props) {
     (indicators.rsi ? 1 : 0) +
     (indicators.macd ? 1 : 0) +
     (indicators.squeezeMomentum ? 1 : 0);
-  const dmiAdxPaneIdx =
-    1 +
-    (indicators.rsi ? 1 : 0) +
-    (indicators.macd ? 1 : 0) +
-    (indicators.squeezeMomentum ? 1 : 0) +
-    (indicators.koncorde ? 1 : 0);
+  // El DMI/ADX comparte el pane del Squeeze cuando overlayOn==='squeeze' y el
+  // Squeeze esta activo; si no, ocupa su propio pane al final.
+  const dmiOverlaysSqueeze =
+    dmiAdxConfig.overlayOn === "squeeze" && indicators.squeezeMomentum;
+  const dmiAdxPaneIdx = dmiOverlaysSqueeze
+    ? sqzPaneIdx
+    : 1 +
+      (indicators.rsi ? 1 : 0) +
+      (indicators.macd ? 1 : 0) +
+      (indicators.squeezeMomentum ? 1 : 0) +
+      (indicators.koncorde ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -1784,10 +1835,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
         onOpenChange={setKoncordeDialogOpen}
       />
 
-      {/* DMI/ADX pane label — pill multi-color con ADX / +DI / -DI */}
+      {/* DMI/ADX pane label — pill multi-color con ADX / +DI / -DI. Cuando
+          comparte pane con el Squeeze, se desplaza hacia abajo para no
+          solaparse con la pill del Squeeze. */}
       {indicators.dmiAdx && paneOffsets[dmiAdxPaneIdx] && (
         <div
-          style={{ top: paneOffsets[dmiAdxPaneIdx].top + 6, left: isMobile ? 6 : 12 }}
+          style={{
+            top: paneOffsets[dmiAdxPaneIdx].top + 6 + (dmiOverlaysSqueeze ? 24 : 0),
+            left: isMobile ? 6 : 12,
+          }}
           className="pointer-events-none absolute z-10 flex items-center gap-1.5"
         >
           <div className="pointer-events-auto flex shrink-0 items-center gap-2 rounded bg-tv-panel/95 px-2 py-0.5 text-[11px] shadow-sm ring-1 ring-tv-border backdrop-blur">

@@ -14,6 +14,7 @@ import {
   useChartStore,
   DEFAULT_DMI_ADX_CONFIG,
   type DmiAdxConfig,
+  type DmiAdxOverlay,
 } from "@/lib/store/chart-store";
 
 interface Props {
@@ -45,6 +46,7 @@ export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
       minusDIColor: draft.minusDIColor,
       keyLevelColor: draft.keyLevelColor,
       keyLevelDashed: draft.keyLevelDashed,
+      overlayOn: draft.overlayOn,
     });
     onOpenChange(false);
   }
@@ -64,6 +66,20 @@ export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
             <NumField label="DI Length" value={draft.diLength} onChange={(n) => update("diLength", n)} />
             <NumField label="Key Level" value={draft.keyLevel} onChange={(n) => update("keyLevel", n)} />
           </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
+              Mostrar en panel
+            </span>
+            <select
+              value={draft.overlayOn}
+              onChange={(e) => update("overlayOn", e.target.value as DmiAdxOverlay)}
+              className="rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs text-tv-text outline-none focus:border-tv-blue"
+            >
+              <option value="own">Panel propio</option>
+              <option value="squeeze">Squeeze Momentum</option>
+            </select>
+          </label>
 
           <div className="border-t border-tv-border pt-2">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
