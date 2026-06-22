@@ -15,12 +15,26 @@ import {
   DEFAULT_DMI_ADX_CONFIG,
   type DmiAdxConfig,
   type DmiAdxOverlay,
+  type LineThickness,
 } from "@/lib/store/chart-store";
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }
+
+/** Claves de cada linea para mapear su show/color/width sin repetir codigo. */
+const LINES: {
+  name: string;
+  showKey: keyof DmiAdxConfig;
+  colorKey: keyof DmiAdxConfig;
+  widthKey: keyof DmiAdxConfig;
+}[] = [
+  { name: "ADX", showKey: "showADX", colorKey: "adxColor", widthKey: "adxWidth" },
+  { name: "+DI", showKey: "showPlusDI", colorKey: "plusDIColor", widthKey: "plusDIWidth" },
+  { name: "−DI", showKey: "showMinusDI", colorKey: "minusDIColor", widthKey: "minusDIWidth" },
+  { name: "Key Level", showKey: "showKeyLevel", colorKey: "keyLevelColor", widthKey: "keyLevelWidth" },
+];
 
 export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
   const config = useChartStore((s) => s.dmiAdxConfig);
@@ -38,15 +52,10 @@ export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
 
   function apply() {
     setConfig({
+      ...draft,
       adxLength: clampInt(draft.adxLength, 1, 200),
       diLength: clampInt(draft.diLength, 1, 200),
       keyLevel: clampInt(draft.keyLevel, 0, 100),
-      adxColor: draft.adxColor,
-      plusDIColor: draft.plusDIColor,
-      minusDIColor: draft.minusDIColor,
-      keyLevelColor: draft.keyLevelColor,
-      keyLevelDashed: draft.keyLevelDashed,
-      overlayOn: draft.overlayOn,
     });
     onOpenChange(false);
   }
@@ -83,12 +92,22 @@ export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
 
           <div className="border-t border-tv-border pt-2">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
-              Colores
+              Líneas
             </p>
-            <ColorField label="ADX" value={draft.adxColor} onChange={(v) => update("adxColor", v)} />
-            <ColorField label="+DI" value={draft.plusDIColor} onChange={(v) => update("plusDIColor", v)} />
-            <ColorField label="−DI" value={draft.minusDIColor} onChange={(v) => update("minusDIColor", v)} />
-            <ColorField label="Key Level" value={draft.keyLevelColor} onChange={(v) => update("keyLevelColor", v)} />
+            <div className="flex flex-col gap-2">
+              {LINES.map((ln) => (
+                <LineRow
+                  key={ln.name}
+                  name={ln.name}
+                  show={draft[ln.showKey] as boolean}
+                  color={draft[ln.colorKey] as string}
+                  width={draft[ln.widthKey] as LineThickness}
+                  onShow={(v) => update(ln.showKey, v as DmiAdxConfig[typeof ln.showKey])}
+                  onColor={(v) => update(ln.colorKey, v as DmiAdxConfig[typeof ln.colorKey])}
+                  onWidth={(v) => update(ln.widthKey, v as DmiAdxConfig[typeof ln.widthKey])}
+                />
+              ))}
+            </div>
           </div>
 
           <CheckboxField
@@ -119,6 +138,67 @@ export function DmiAdxSettingsDialog({ open, onOpenChange }: Props) {
   );
 }
 
+/**
+ * Fila de configuracion de una linea: checkbox de visibilidad, nombre, color
+ * picker y selector de grosor. En movil se apila (flex-wrap) para legibilidad.
+ */
+function LineRow({
+  name,
+  show,
+  color,
+  width,
+  onShow,
+  onColor,
+  onWidth,
+}: {
+  name: string;
+  show: boolean;
+  color: string;
+  width: LineThickness;
+  onShow: (v: boolean) => void;
+  onColor: (v: string) => void;
+  onWidth: (v: LineThickness) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border border-tv-border/60 px-2 py-1.5">
+      <label className="flex items-center gap-1.5">
+        <input
+          type="checkbox"
+          checked={show}
+          onChange={(e) => onShow(e.target.checked)}
+          className="h-3.5 w-3.5 accent-tv-blue"
+          aria-label={`Mostrar ${name}`}
+        />
+        <span className="w-14 shrink-0 text-xs font-medium text-tv-text">{name}</span>
+      </label>
+      <input
+        type="color"
+        value={color}
+        onChange={(e) => onColor(e.target.value)}
+        className="h-7 w-9 cursor-pointer rounded border border-tv-border bg-tv-bg"
+        aria-label={`Color ${name}`}
+      />
+      <Input
+        type="text"
+        value={color}
+        onChange={(e) => onColor(e.target.value)}
+        className="h-7 w-20 bg-tv-bg text-xs tabular-nums"
+        aria-label={`Color hex ${name}`}
+      />
+      <select
+        value={width}
+        onChange={(e) => onWidth(e.target.value as LineThickness)}
+        className="h-7 rounded border border-tv-border bg-tv-bg px-1.5 text-xs text-tv-text outline-none focus:border-tv-blue"
+        aria-label={`Grosor ${name}`}
+      >
+        <option value="fino">Fino</option>
+        <option value="medio">Medio</option>
+        <option value="grueso">Grueso</option>
+      </select>
+    </div>
+  );
+}
+
 function NumField({
   label,
   value,
@@ -141,36 +221,6 @@ function NumField({
         ariaLabel={label}
         className="bg-tv-bg"
       />
-    </label>
-  );
-}
-
-function ColorField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-2 py-1">
-      <span className="text-xs text-tv-text">{label}</span>
-      <span className="flex items-center gap-2">
-        <input
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-7 w-10 cursor-pointer rounded border border-tv-border bg-tv-bg"
-        />
-        <Input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-7 w-24 bg-tv-bg text-xs tabular-nums"
-        />
-      </span>
     </label>
   );
 }

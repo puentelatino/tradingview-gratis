@@ -19,6 +19,14 @@ export type IndicatorKey =
 /** Donde se dibuja el DMI/ADX: pane propio o compartiendo el del Squeeze. */
 export type DmiAdxOverlay = "own" | "squeeze";
 
+/** Grosor de linea: mapea a lineWidth de lightweight-charts (1/2/3). */
+export type LineThickness = "fino" | "medio" | "grueso";
+
+/** Convierte el enum de grosor al lineWidth numerico (1 | 2 | 3). */
+export function thicknessToWidth(t: LineThickness): 1 | 2 | 3 {
+  return t === "fino" ? 1 : t === "medio" ? 2 : 3;
+}
+
 export interface DmiAdxConfig {
   adxLength: number;
   diLength: number;
@@ -29,6 +37,16 @@ export interface DmiAdxConfig {
   keyLevelColor: string;
   keyLevelDashed: boolean;
   overlayOn: DmiAdxOverlay;
+  // Visibilidad por linea
+  showADX: boolean;
+  showPlusDI: boolean;
+  showMinusDI: boolean;
+  showKeyLevel: boolean;
+  // Grosor por linea
+  adxWidth: LineThickness;
+  plusDIWidth: LineThickness;
+  minusDIWidth: LineThickness;
+  keyLevelWidth: LineThickness;
 }
 
 export const DEFAULT_DMI_ADX_CONFIG: DmiAdxConfig = {
@@ -41,6 +59,14 @@ export const DEFAULT_DMI_ADX_CONFIG: DmiAdxConfig = {
   keyLevelColor: "#FFFFFF",
   keyLevelDashed: true,
   overlayOn: "own",
+  showADX: true,
+  showPlusDI: true,
+  showMinusDI: true,
+  showKeyLevel: true,
+  adxWidth: "medio",
+  plusDIWidth: "fino",
+  minusDIWidth: "fino",
+  keyLevelWidth: "fino",
 };
 
 export interface KoncordeConfig {

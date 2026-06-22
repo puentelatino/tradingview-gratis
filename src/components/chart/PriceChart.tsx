@@ -27,6 +27,7 @@ import {
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
   INDICATOR_COLORS,
+  thicknessToWidth,
   useChartStore,
   type IndicatorKey,
 } from "@/lib/store/chart-store";
@@ -186,10 +187,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
   koncordeConfigRef.current = koncordeConfig;
   const dmiAdxConfigRef = useRef(dmiAdxConfig);
   dmiAdxConfigRef.current = dmiAdxConfig;
-  // True cuando el DMI esta superpuesto en el pane del Squeeze con eje 'left'
-  // visible. Lo lee el interceptor de pinch para bloquear tambien la franja
-  // del eje izquierdo en movil.
-  const dmiOverlayLeftRef = useRef(false);
+  // True cuando el DMI tiene su eje 'left' visible (ambos modos, own y squeeze).
+  // Lo lee el interceptor de pinch para bloquear tambien la franja del eje
+  // izquierdo en movil.
+  const dmiLeftAxisRef = useRef(false);
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -452,7 +453,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       // Cuando el DMI esta superpuesto, hay un eje izquierdo (en el pane del
       // Squeeze) que tambien hay que tratar como eje: bloquear pinch sobre el.
       // El ancho se lee de la price scale de la serie del DMI (escala 'left').
-      if (dmiOverlayLeftRef.current) {
+      if (dmiLeftAxisRef.current) {
         let leftAxisW = 0;
         try {
           leftAxisW = dmiAdxAdxRef.current?.priceScale().width() ?? 0;
@@ -823,14 +824,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (!chartRef.current) return;
 
     function teardownDmi() {
-      // Si el DMI tenia el eje izquierdo visible (overlay), lo ocultamos antes
-      // de destruir las series para no dejar un eje 'left' huerfano en el pane
-      // del Squeeze.
-      if (dmiOverlayLeftRef.current) {
+      // Si el DMI tenia el eje izquierdo visible, lo ocultamos antes de destruir
+      // las series para no dejar un eje 'left' huerfano (relevante sobre todo
+      // en modo overlay, donde el pane del Squeeze sobrevive a la teardown).
+      if (dmiLeftAxisRef.current) {
         try {
           dmiAdxAdxRef.current?.priceScale().applyOptions({ visible: false });
         } catch {}
-        dmiOverlayLeftRef.current = false;
+        dmiLeftAxisRef.current = false;
       }
       const remove = (s: ISeriesApi<"Line"> | null) => {
         if (s) chartRef.current!.removeSeries(s);
@@ -852,15 +853,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
       return;
     }
 
-    // Ubicacion deseada. Si overlayOn === 'squeeze' Y el Squeeze esta activo,
-    // compartimos su pane (1 + rsi + macd) pero con una escala PROPIA a la
-    // IZQUIERDA ('left'), independiente y ajustable; el Squeeze conserva la
-    // 'right'. Asi cada indicador se escala arrastrando su eje, sin offset.
-    // Si no hay overlay, pane propio dinamico con la escala 'right' normal.
+    // El DMI/ADX usa SIEMPRE el eje IZQUIERDO ('left'), en ambos modos. Si
+    // overlayOn === 'squeeze' Y el Squeeze esta activo, comparte su pane
+    // (1 + rsi + macd) y el Squeeze conserva su 'right'. Si no, pane propio
+    // dinamico con el eje izquierdo visible y el derecho oculto.
     const overlay =
       dmiAdxConfigRef.current.overlayOn === "squeeze" && indicators.squeezeMomentum;
     let paneIndex: number;
-    const scaleId = overlay ? "left" : undefined; // undefined → 'right' por defecto
     if (overlay) {
       paneIndex = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
     } else {
@@ -871,9 +870,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
         (indicators.squeezeMomentum ? 1 : 0) +
         (indicators.koncorde ? 1 : 0);
     }
-    const placementKey = `${paneIndex}:${scaleId ?? "right"}`;
+    const placementKey = `${paneIndex}:left:${overlay ? "shared" : "own"}`;
 
-    // Si ya esta en la ubicacion correcta, nada que hacer (los colores/datos
+    // Si ya esta en la ubicacion correcta, nada que hacer (color/grosor/datos
     // los gestionan otros effects).
     if (dmiAdxAdxRef.current && dmiPlacementRef.current === placementKey) {
       requestAnimationFrame(() => recomputePaneOffsets());
@@ -884,43 +883,54 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (dmiAdxAdxRef.current) teardownDmi();
 
     const cfg = dmiAdxConfigRef.current;
-    // En overlay las series van a la escala 'left' propia del pane del Squeeze;
-    // en pane propio omitimos priceScaleId → 'right' por defecto de su pane.
-    const mkLine = (color: string, width: 1 | 2, dashed = false) =>
+    // Todas las series del DMI van a la escala 'left' del pane (propio o del
+    // Squeeze). El grosor y la visibilidad iniciales salen de la config.
+    const mkLine = (
+      color: string,
+      thickness: ReturnType<typeof thicknessToWidth>,
+      visible: boolean,
+      dashed = false,
+    ) =>
       chartRef.current!.addSeries(
         LineSeries,
         {
           color,
-          lineWidth: width,
+          lineWidth: thickness,
           lineStyle: dashed ? 2 : 0, // 2 = Dashed
           priceLineVisible: false,
           lastValueVisible: false,
-          ...(scaleId ? { priceScaleId: scaleId } : {}),
+          visible,
+          priceScaleId: "left",
         },
         paneIndex,
       );
 
     // Orden de creacion: el Key Level se crea el ultimo → se dibuja por encima.
-    dmiAdxAdxRef.current = mkLine(cfg.adxColor, 2);
-    dmiAdxPlusRef.current = mkLine(cfg.plusDIColor, 1);
-    dmiAdxMinusRef.current = mkLine(cfg.minusDIColor, 1);
-    dmiAdxKeyRef.current = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
+    dmiAdxAdxRef.current = mkLine(cfg.adxColor, thicknessToWidth(cfg.adxWidth), cfg.showADX);
+    dmiAdxPlusRef.current = mkLine(cfg.plusDIColor, thicknessToWidth(cfg.plusDIWidth), cfg.showPlusDI);
+    dmiAdxMinusRef.current = mkLine(cfg.minusDIColor, thicknessToWidth(cfg.minusDIWidth), cfg.showMinusDI);
+    dmiAdxKeyRef.current = mkLine(cfg.keyLevelColor, thicknessToWidth(cfg.keyLevelWidth), cfg.showKeyLevel, cfg.keyLevelDashed);
     dmiPlacementRef.current = placementKey;
 
-    if (overlay) {
-      // Hacemos visible el eje 'left' SOLO en este pane (el del Squeeze) via la
-      // price scale de la serie. No tocamos leftPriceScale a nivel de chart, asi
-      // que el pane del precio y los de RSI/MACD/Koncorde no ganan eje izquierdo.
+    // Hacemos visible el eje 'left' SOLO en este pane via la price scale de la
+    // serie. No tocamos leftPriceScale a nivel de chart, asi que el pane del
+    // precio y los de RSI/MACD/Koncorde no ganan eje izquierdo.
+    try {
+      dmiAdxAdxRef.current.priceScale().applyOptions({
+        visible: true,
+        borderColor: TV_COLORS.border,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      });
+    } catch {}
+    dmiLeftAxisRef.current = true;
+
+    if (!overlay) {
+      // En pane propio, el eje derecho queda vacio: lo ocultamos para que no
+      // se vea un eje sin numeros. (El pane se destruye al apagar el DMI, asi
+      // que no hay estado que restaurar.)
       try {
-        dmiAdxAdxRef.current.priceScale().applyOptions({
-          visible: true,
-          borderColor: TV_COLORS.border,
-          scaleMargins: { top: 0.1, bottom: 0.1 },
-        });
+        chartRef.current.priceScale("right", paneIndex).applyOptions({ visible: false });
       } catch {}
-      dmiOverlayLeftRef.current = true;
-    } else {
-      dmiOverlayLeftRef.current = false;
       try {
         chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
         chartRef.current.panes()[0]?.setStretchFactor(3);
@@ -965,12 +975,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
     koncordeMarronLineRef.current?.applyOptions({ visible: kv });
     koncordeAzulLineRef.current?.applyOptions({ visible: kv });
     koncordeMediaLineRef.current?.applyOptions({ visible: kv });
+    // Visibilidad final del DMI = indicador activo Y no oculto Y checkbox de
+    // la linea marcado. Se combina aqui y en el effect de config (que reacciona
+    // a los checkboxes); ambos calculan lo mismo.
     const dv = v("dmiAdx");
-    dmiAdxAdxRef.current?.applyOptions({ visible: dv });
-    dmiAdxPlusRef.current?.applyOptions({ visible: dv });
-    dmiAdxMinusRef.current?.applyOptions({ visible: dv });
-    dmiAdxKeyRef.current?.applyOptions({ visible: dv });
-  }, [indicators, hidden]);
+    const dc = dmiAdxConfig;
+    dmiAdxAdxRef.current?.applyOptions({ visible: dv && dc.showADX });
+    dmiAdxPlusRef.current?.applyOptions({ visible: dv && dc.showPlusDI });
+    dmiAdxMinusRef.current?.applyOptions({ visible: dv && dc.showMinusDI });
+    dmiAdxKeyRef.current?.applyOptions({ visible: dv && dc.showKeyLevel });
+  }, [indicators, hidden, dmiAdxConfig]);
 
   // Recompute indicators when config changes (periods)
   useEffect(() => {
@@ -1090,14 +1104,32 @@ export function PriceChart({ symbol, timeframe }: Props) {
     koncordeConfig.lineaMedia,
   ]);
 
-  // Recolor + recalculo de DMI/ADX al cambiar su config
+  // Recolor / grosor / visibilidad por linea + recalculo de DMI/ADX al cambiar
+  // su config. Aplica color, lineWidth y visible en vivo (combinando con el
+  // estado activo/oculto del indicador).
   useEffect(() => {
-    dmiAdxAdxRef.current?.applyOptions({ color: dmiAdxConfig.adxColor });
-    dmiAdxPlusRef.current?.applyOptions({ color: dmiAdxConfig.plusDIColor });
-    dmiAdxMinusRef.current?.applyOptions({ color: dmiAdxConfig.minusDIColor });
+    const cfg = dmiAdxConfig;
+    const enabled = indicators.dmiAdx && !hidden.dmiAdx;
+    dmiAdxAdxRef.current?.applyOptions({
+      color: cfg.adxColor,
+      lineWidth: thicknessToWidth(cfg.adxWidth),
+      visible: enabled && cfg.showADX,
+    });
+    dmiAdxPlusRef.current?.applyOptions({
+      color: cfg.plusDIColor,
+      lineWidth: thicknessToWidth(cfg.plusDIWidth),
+      visible: enabled && cfg.showPlusDI,
+    });
+    dmiAdxMinusRef.current?.applyOptions({
+      color: cfg.minusDIColor,
+      lineWidth: thicknessToWidth(cfg.minusDIWidth),
+      visible: enabled && cfg.showMinusDI,
+    });
     dmiAdxKeyRef.current?.applyOptions({
-      color: dmiAdxConfig.keyLevelColor,
-      lineStyle: dmiAdxConfig.keyLevelDashed ? 2 : 0,
+      color: cfg.keyLevelColor,
+      lineWidth: thicknessToWidth(cfg.keyLevelWidth),
+      lineStyle: cfg.keyLevelDashed ? 2 : 0,
+      visible: enabled && cfg.showKeyLevel,
     });
     updateDmiAdx();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1110,6 +1142,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     dmiAdxConfig.minusDIColor,
     dmiAdxConfig.keyLevelColor,
     dmiAdxConfig.keyLevelDashed,
+    dmiAdxConfig.showADX,
+    dmiAdxConfig.showPlusDI,
+    dmiAdxConfig.showMinusDI,
+    dmiAdxConfig.showKeyLevel,
+    dmiAdxConfig.adxWidth,
+    dmiAdxConfig.plusDIWidth,
+    dmiAdxConfig.minusDIWidth,
+    dmiAdxConfig.keyLevelWidth,
   ]);
 
   // Sync price lines from store to the candle series
