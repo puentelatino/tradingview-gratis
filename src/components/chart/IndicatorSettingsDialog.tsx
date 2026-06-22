@@ -28,6 +28,7 @@ const TITLES: Record<IndicatorKey, string> = {
   vrvp: "Volume Profile (VRVP)",
   squeezeMomentum: "Squeeze Momentum (LazyBear)",
   koncorde: "Koncorde (Blai5)",
+  dmiAdx: "DMI + ADX (Key Level)",
 };
 
 /** Borrador de colores editable desde este dialog. */

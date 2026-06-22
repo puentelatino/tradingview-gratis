@@ -543,6 +543,169 @@ export function calculateKoncorde(
   return out;
 }
 
+// ─── DMI + ADX + Key Level ───────────────────────────────────────────────────
+
+export interface DmiAdxOptions {
+  /** Suavizado del ADX (adxlen) */
+  adxLength: number;
+  /** Longitud de los DI (dilen) */
+  diLength: number;
+}
+
+export interface DmiAdxPoint {
+  time: number;
+  adx: number | null;
+  plusDI: number | null;
+  minusDI: number | null;
+}
+
+/**
+ * RMA de Wilder sobre un array numerico, replicando `ta.rma(src, period)` de
+ * Pine Script:
+ *   - Devuelve null en los primeros (period-1) indices.
+ *   - El primer valor NO nulo (indice period-1) es la SMA de los primeros
+ *     `period` valores.
+ *   - A partir de ahi aplica la recurrencia de Wilder:
+ *       rma[i] = (rma[i-1] * (period - 1) + src[i]) / period
+ */
+function rmaArr(values: number[], period: number): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  if (period < 1 || n < period) return out;
+  // Siembra: SMA de los primeros `period` valores en el indice period-1
+  let seed = 0;
+  for (let i = 0; i < period; i++) seed += values[i];
+  let prev = seed / period;
+  out[period - 1] = prev;
+  for (let i = period; i < n; i++) {
+    prev = (prev * (period - 1) + values[i]) / period;
+    out[i] = prev;
+  }
+  return out;
+}
+
+/**
+ * Replica `fixnan` de Pine: sustituye cada valor null/NaN/Infinity por el
+ * ultimo valor valido anterior. Mantiene null solo hasta el primer valido.
+ */
+function fixnanArr(values: (number | null)[]): (number | null)[] {
+  const n = values.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  let last: number | null = null;
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (v !== null && isFinite(v)) {
+      last = v;
+      out[i] = v;
+    } else {
+      out[i] = last; // arrastra el ultimo valido (null si aun no hay)
+    }
+  }
+  return out;
+}
+
+/**
+ * Directional Movement Index + ADX.
+ *
+ * Replica exacta del Pine:
+ *   up      = high[i] - high[i-1]
+ *   down    = low[i-1] - low[i]
+ *   plusDM  = (up > down && up > 0)   ? up   : 0
+ *   minusDM = (down > up && down > 0) ? down : 0
+ *   trS     = rma(tr, diLength)
+ *   plusDI  = fixnan(100 * rma(plusDM, diLength)  / trS)
+ *   minusDI = fixnan(100 * rma(minusDM, diLength) / trS)
+ *   sum     = plusDI + minusDI
+ *   dx      = abs(plusDI - minusDI) / (sum == 0 ? 1 : sum)
+ *   adx     = 100 * rma(dx, adxLength)
+ *
+ * En la barra 0 no hay cambio direccional definible (change=na en Pine): se
+ * inicializan plusDM/minusDM a 0 y tr a (high-low). Tras suficientes barras la
+ * RMA converge, asi que el matiz de la primera barra no afecta al ADX visible.
+ */
+export function calculateDmiAdx(
+  candles: Candle[],
+  options: DmiAdxOptions,
+): DmiAdxPoint[] {
+  const n = candles.length;
+  const out: DmiAdxPoint[] = new Array(n);
+  if (n === 0) return out;
+
+  const { adxLength, diLength } = options;
+
+  // Movimiento direccional bruto y true range por vela
+  const plusDM = new Array<number>(n).fill(0);
+  const minusDM = new Array<number>(n).fill(0);
+  const tr = new Array<number>(n);
+  tr[0] = candles[0].high - candles[0].low;
+  for (let i = 1; i < n; i++) {
+    const up = candles[i].high - candles[i - 1].high;
+    const down = candles[i - 1].low - candles[i].low;
+    plusDM[i] = up > down && up > 0 ? up : 0;
+    minusDM[i] = down > up && down > 0 ? down : 0;
+    tr[i] = trueRangeAt(candles, i);
+  }
+
+  const trS = rmaArr(tr, diLength);
+  const plusRma = rmaArr(plusDM, diLength);
+  const minusRma = rmaArr(minusDM, diLength);
+
+  // plusDI / minusDI brutos (con posibles divisiones invalidas) + fixnan
+  const plusRaw = new Array<number | null>(n).fill(null);
+  const minusRaw = new Array<number | null>(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const t = trS[i];
+    const p = plusRma[i];
+    const m = minusRma[i];
+    if (t !== null && t !== 0 && p !== null) plusRaw[i] = (100 * p) / t;
+    if (t !== null && t !== 0 && m !== null) minusRaw[i] = (100 * m) / t;
+  }
+  const plusDI = fixnanArr(plusRaw);
+  const minusDI = fixnanArr(minusRaw);
+
+  // dx → rma(dx, adxLength)
+  const dxRaw = new Array<number>(n).fill(0);
+  const dxValid = new Array<boolean>(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    const p = plusDI[i];
+    const m = minusDI[i];
+    if (p === null || m === null) continue;
+    const sum = p + m;
+    dxRaw[i] = Math.abs(p - m) / (sum === 0 ? 1 : sum);
+    dxValid[i] = true;
+  }
+  // El primer dx valido marca el arranque para la RMA del ADX
+  let firstDx = -1;
+  for (let i = 0; i < n; i++) {
+    if (dxValid[i]) {
+      firstDx = i;
+      break;
+    }
+  }
+  const adxOut = new Array<number | null>(n).fill(null);
+  if (firstDx >= 0 && firstDx + adxLength - 1 < n) {
+    // Sembramos la RMA del ADX con la SMA de los primeros `adxLength` dx
+    let seed = 0;
+    for (let k = firstDx; k < firstDx + adxLength; k++) seed += dxRaw[k];
+    let prev = seed / adxLength;
+    adxOut[firstDx + adxLength - 1] = 100 * prev;
+    for (let i = firstDx + adxLength; i < n; i++) {
+      prev = (prev * (adxLength - 1) + dxRaw[i]) / adxLength;
+      adxOut[i] = 100 * prev;
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    out[i] = {
+      time: candles[i].time,
+      adx: adxOut[i],
+      plusDI: plusDI[i],
+      minusDI: minusDI[i],
+    };
+  }
+  return out;
+}
+
 // ─── Squeeze Momentum (LazyBear, SQZMOM_LB) ──────────────────────────────────
 
 export type SqueezeState = "on" | "off" | "none";

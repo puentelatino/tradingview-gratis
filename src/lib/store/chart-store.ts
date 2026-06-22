@@ -13,7 +13,30 @@ export type IndicatorKey =
   | "volume"
   | "vrvp"
   | "squeezeMomentum"
-  | "koncorde";
+  | "koncorde"
+  | "dmiAdx";
+
+export interface DmiAdxConfig {
+  adxLength: number;
+  diLength: number;
+  keyLevel: number;
+  adxColor: string;
+  plusDIColor: string;
+  minusDIColor: string;
+  keyLevelColor: string;
+  keyLevelDashed: boolean;
+}
+
+export const DEFAULT_DMI_ADX_CONFIG: DmiAdxConfig = {
+  adxLength: 14,
+  diLength: 14,
+  keyLevel: 23,
+  adxColor: "#FF0000",
+  plusDIColor: "#2196F3",
+  minusDIColor: "#9E9E9E",
+  keyLevelColor: "#FFFFFF",
+  keyLevelDashed: true,
+};
 
 export interface KoncordeConfig {
   m: number;
@@ -152,6 +175,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   vrvp: "#26a69a",
   squeezeMomentum: "#2196f3",
   koncorde: "#66ff66",
+  dmiAdx: "#ff0000",
 };
 
 /**
@@ -220,6 +244,7 @@ interface ChartState {
   vrvpConfig: VrvpConfig;
   squeezeMomentumConfig: SqueezeMomentumConfig;
   koncordeConfig: KoncordeConfig;
+  dmiAdxConfig: DmiAdxConfig;
   watchlist: string[];
 
   // Ephemeral UI state (not persisted)
@@ -247,6 +272,8 @@ interface ChartState {
   resetSqueezeMomentumConfig: () => void;
   setKoncordeConfig: (patch: Partial<KoncordeConfig>) => void;
   resetKoncordeConfig: () => void;
+  setDmiAdxConfig: (patch: Partial<DmiAdxConfig>) => void;
+  resetDmiAdxConfig: () => void;
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
@@ -271,6 +298,7 @@ export const useChartStore = create<ChartState>()(
         vrvp: false,
         squeezeMomentum: false,
         koncorde: false,
+        dmiAdx: false,
       },
       hidden: {
         ema20: false,
@@ -282,12 +310,14 @@ export const useChartStore = create<ChartState>()(
         vrvp: false,
         squeezeMomentum: false,
         koncorde: false,
+        dmiAdx: false,
       },
       config: { ...DEFAULT_CONFIG },
       indicatorColors: { ...DEFAULT_INDICATOR_COLORS },
       vrvpConfig: { ...DEFAULT_VRVP_CONFIG },
       squeezeMomentumConfig: { ...DEFAULT_SQUEEZE_MOMENTUM_CONFIG },
       koncordeConfig: { ...DEFAULT_KONCORDE_CONFIG },
+      dmiAdxConfig: { ...DEFAULT_DMI_ADX_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
       tool: "cursor",
       priceLines: [],
@@ -329,6 +359,9 @@ export const useChartStore = create<ChartState>()(
       setKoncordeConfig: (patch) =>
         set((s) => ({ koncordeConfig: { ...s.koncordeConfig, ...patch } })),
       resetKoncordeConfig: () => set({ koncordeConfig: { ...DEFAULT_KONCORDE_CONFIG } }),
+      setDmiAdxConfig: (patch) =>
+        set((s) => ({ dmiAdxConfig: { ...s.dmiAdxConfig, ...patch } })),
+      resetDmiAdxConfig: () => set({ dmiAdxConfig: { ...DEFAULT_DMI_ADX_CONFIG } }),
       addToWatchlist: (s) =>
         set((state) => ({
           watchlist: state.watchlist.includes(s)
@@ -376,6 +409,7 @@ export const useChartStore = create<ChartState>()(
         vrvpConfig: s.vrvpConfig,
         squeezeMomentumConfig: s.squeezeMomentumConfig,
         koncordeConfig: s.koncordeConfig,
+        dmiAdxConfig: s.dmiAdxConfig,
         watchlist: s.watchlist,
       }),
       // Deep merge: blinda contra evoluciones del schema. Cuando se anaden

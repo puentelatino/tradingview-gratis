@@ -22,6 +22,7 @@ import {
   macd,
   calculateSqueezeMomentum,
   calculateKoncorde,
+  calculateDmiAdx,
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
@@ -37,6 +38,7 @@ import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 import { VolumeProfileSettingsDialog } from "./VolumeProfileSettingsDialog";
 import { SqueezeMomentumSettingsDialog } from "./SqueezeMomentumSettingsDialog";
 import { KoncordeSettingsDialog } from "./KoncordeSettingsDialog";
+import { DmiAdxSettingsDialog } from "./DmiAdxSettingsDialog";
 
 interface MeasurePoint {
   time: number;
@@ -116,6 +118,9 @@ interface LastValues {
   koncordeMarron?: number;
   koncordeVerde?: number;
   koncordeMedia?: number;
+  dmiAdx?: number;
+  dmiPlusDI?: number;
+  dmiMinusDI?: number;
 }
 
 interface PaneOffset {
@@ -149,6 +154,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const koncordeMarronLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const koncordeAzulLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const koncordeMediaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // DMI/ADX — 4 LineSeries (ADX, +DI, -DI, Key Level)
+  const dmiAdxAdxRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const dmiAdxPlusRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const dmiAdxMinusRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const dmiAdxKeyRef = useRef<ISeriesApi<"Line"> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
 
@@ -161,14 +171,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
   colorsRef.current = indicatorColors;
   const sqzConfig = useChartStore((s) => s.squeezeMomentumConfig);
   const koncordeConfig = useChartStore((s) => s.koncordeConfig);
+  const dmiAdxConfig = useChartStore((s) => s.dmiAdxConfig);
   const isMobile = useIsMobile();
   const [vrvpDialogOpen, setVrvpDialogOpen] = useState(false);
   const [sqzDialogOpen, setSqzDialogOpen] = useState(false);
   const [koncordeDialogOpen, setKoncordeDialogOpen] = useState(false);
+  const [dmiAdxDialogOpen, setDmiAdxDialogOpen] = useState(false);
   const sqzConfigRef = useRef(sqzConfig);
   sqzConfigRef.current = sqzConfig;
   const koncordeConfigRef = useRef(koncordeConfig);
   koncordeConfigRef.current = koncordeConfig;
+  const dmiAdxConfigRef = useRef(dmiAdxConfig);
+  dmiAdxConfigRef.current = dmiAdxConfig;
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -496,6 +510,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
       koncordeMarronLineRef.current = null;
       koncordeAzulLineRef.current = null;
       koncordeMediaLineRef.current = null;
+      dmiAdxAdxRef.current = null;
+      dmiAdxPlusRef.current = null;
+      dmiAdxMinusRef.current = null;
+      dmiAdxKeyRef.current = null;
     };
   }, []);
 
@@ -782,6 +800,68 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.koncorde, indicators.rsi, indicators.macd, indicators.squeezeMomentum]);
 
+  // DMI/ADX pane — colocado tras RSI/MACD/Squeeze/Koncorde segun cuales esten activos
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.dmiAdx && !dmiAdxAdxRef.current) {
+      let paneIndex = 1;
+      if (indicators.rsi) paneIndex += 1;
+      if (indicators.macd) paneIndex += 1;
+      if (indicators.squeezeMomentum) paneIndex += 1;
+      if (indicators.koncorde) paneIndex += 1;
+
+      const cfg = dmiAdxConfigRef.current;
+      const mkLine = (color: string, width: 1 | 2, dashed = false) =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color,
+            lineWidth: width,
+            lineStyle: dashed ? 2 : 0, // 2 = Dashed en lightweight-charts
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+
+      const adxLine = mkLine(cfg.adxColor, 2);
+      const plusLine = mkLine(cfg.plusDIColor, 1);
+      const minusLine = mkLine(cfg.minusDIColor, 1);
+      const keyLine = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
+
+      dmiAdxAdxRef.current = adxLine;
+      dmiAdxPlusRef.current = plusLine;
+      dmiAdxMinusRef.current = minusLine;
+      dmiAdxKeyRef.current = keyLine;
+
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateDmiAdx();
+    } else if (!indicators.dmiAdx && dmiAdxAdxRef.current && chartRef.current) {
+      const remove = (s: ISeriesApi<"Line"> | null) => {
+        if (s) chartRef.current!.removeSeries(s);
+      };
+      remove(dmiAdxAdxRef.current);
+      remove(dmiAdxPlusRef.current);
+      remove(dmiAdxMinusRef.current);
+      remove(dmiAdxKeyRef.current);
+      dmiAdxAdxRef.current = null;
+      dmiAdxPlusRef.current = null;
+      dmiAdxMinusRef.current = null;
+      dmiAdxKeyRef.current = null;
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    indicators.dmiAdx,
+    indicators.rsi,
+    indicators.macd,
+    indicators.squeezeMomentum,
+    indicators.koncorde,
+  ]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -807,6 +887,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
     koncordeMarronLineRef.current?.applyOptions({ visible: kv });
     koncordeAzulLineRef.current?.applyOptions({ visible: kv });
     koncordeMediaLineRef.current?.applyOptions({ visible: kv });
+    const dv = v("dmiAdx");
+    dmiAdxAdxRef.current?.applyOptions({ visible: dv });
+    dmiAdxPlusRef.current?.applyOptions({ visible: dv });
+    dmiAdxMinusRef.current?.applyOptions({ visible: dv });
+    dmiAdxKeyRef.current?.applyOptions({ visible: dv });
   }, [indicators, hidden]);
 
   // Recompute indicators when config changes (periods)
@@ -925,6 +1010,28 @@ export function PriceChart({ symbol, timeframe }: Props) {
     koncordeConfig.lineaMarron,
     koncordeConfig.lineaAzul,
     koncordeConfig.lineaMedia,
+  ]);
+
+  // Recolor + recalculo de DMI/ADX al cambiar su config
+  useEffect(() => {
+    dmiAdxAdxRef.current?.applyOptions({ color: dmiAdxConfig.adxColor });
+    dmiAdxPlusRef.current?.applyOptions({ color: dmiAdxConfig.plusDIColor });
+    dmiAdxMinusRef.current?.applyOptions({ color: dmiAdxConfig.minusDIColor });
+    dmiAdxKeyRef.current?.applyOptions({
+      color: dmiAdxConfig.keyLevelColor,
+      lineStyle: dmiAdxConfig.keyLevelDashed ? 2 : 0,
+    });
+    updateDmiAdx();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    dmiAdxConfig.adxLength,
+    dmiAdxConfig.diLength,
+    dmiAdxConfig.keyLevel,
+    dmiAdxConfig.adxColor,
+    dmiAdxConfig.plusDIColor,
+    dmiAdxConfig.minusDIColor,
+    dmiAdxConfig.keyLevelColor,
+    dmiAdxConfig.keyLevelDashed,
   ]);
 
   // Sync price lines from store to the candle series
@@ -1156,6 +1263,41 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }));
   }
 
+  function updateDmiAdx() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !dmiAdxAdxRef.current) return;
+    const cfg = dmiAdxConfigRef.current;
+    const pts = calculateDmiAdx(c, {
+      adxLength: cfg.adxLength,
+      diLength: cfg.diLength,
+    });
+
+    const adxData: { time: UTCTimestamp; value: number }[] = [];
+    const plusData: { time: UTCTimestamp; value: number }[] = [];
+    const minusData: { time: UTCTimestamp; value: number }[] = [];
+    const keyData: { time: UTCTimestamp; value: number }[] = [];
+    for (const p of pts) {
+      const t = p.time as UTCTimestamp;
+      if (p.adx !== null) adxData.push({ time: t, value: p.adx });
+      if (p.plusDI !== null) plusData.push({ time: t, value: p.plusDI });
+      if (p.minusDI !== null) minusData.push({ time: t, value: p.minusDI });
+      // Key Level: linea horizontal constante en cada vela
+      keyData.push({ time: t, value: cfg.keyLevel });
+    }
+    dmiAdxAdxRef.current.setData(adxData);
+    dmiAdxPlusRef.current?.setData(plusData);
+    dmiAdxMinusRef.current?.setData(minusData);
+    dmiAdxKeyRef.current?.setData(keyData);
+
+    const last = pts.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      dmiAdx: last?.adx ?? undefined,
+      dmiPlusDI: last?.plusDI ?? undefined,
+      dmiMinusDI: last?.minusDI ?? undefined,
+    }));
+  }
+
   // Load historical data + subscribe live
   useEffect(() => {
     let unsub: (() => void) | null = null;
@@ -1193,6 +1335,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateMACD();
         updateSqueezeMomentum();
         updateKoncorde();
+        updateDmiAdx();
         // Tras el cambio de simbolo/timeframe forzamos auto-escala del eje de
         // precio y encajamos el rango temporal. Si no, el eje conservaria los
         // limites del simbolo anterior y las velas nuevas caerian fuera del
@@ -1266,6 +1409,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
             updateMACD();
             updateSqueezeMomentum();
             updateKoncorde();
+            updateDmiAdx();
             const prev = arr[arr.length - 2] ?? lastCandle;
             setLastPrice({
               value: k.close,
@@ -1304,6 +1448,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
     (indicators.rsi ? 1 : 0) +
     (indicators.macd ? 1 : 0) +
     (indicators.squeezeMomentum ? 1 : 0);
+  const dmiAdxPaneIdx =
+    1 +
+    (indicators.rsi ? 1 : 0) +
+    (indicators.macd ? 1 : 0) +
+    (indicators.squeezeMomentum ? 1 : 0) +
+    (indicators.koncorde ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -1632,6 +1782,60 @@ export function PriceChart({ symbol, timeframe }: Props) {
       <KoncordeSettingsDialog
         open={koncordeDialogOpen}
         onOpenChange={setKoncordeDialogOpen}
+      />
+
+      {/* DMI/ADX pane label — pill multi-color con ADX / +DI / -DI */}
+      {indicators.dmiAdx && paneOffsets[dmiAdxPaneIdx] && (
+        <div
+          style={{ top: paneOffsets[dmiAdxPaneIdx].top + 6, left: isMobile ? 6 : 12 }}
+          className="pointer-events-none absolute z-10 flex items-center gap-1.5"
+        >
+          <div className="pointer-events-auto flex shrink-0 items-center gap-2 rounded bg-tv-panel/95 px-2 py-0.5 text-[11px] shadow-sm ring-1 ring-tv-border backdrop-blur">
+            <span className="font-medium text-tv-text">DMI/ADX</span>
+            {!isMobile && (
+              <div className="flex items-center gap-2 tabular-nums">
+                <span style={{ color: dmiAdxConfig.adxColor }}>
+                  ADX {lastValues.dmiAdx !== undefined ? lastValues.dmiAdx.toFixed(1) : "—"}
+                </span>
+                <span style={{ color: dmiAdxConfig.plusDIColor }}>
+                  +DI {lastValues.dmiPlusDI !== undefined ? lastValues.dmiPlusDI.toFixed(1) : "—"}
+                </span>
+                <span style={{ color: dmiAdxConfig.minusDIColor }}>
+                  −DI {lastValues.dmiMinusDI !== undefined ? lastValues.dmiMinusDI.toFixed(1) : "—"}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={() => toggleHidden("dmiAdx")}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+              aria-label={hidden.dmiAdx ? "Mostrar" : "Ocultar"}
+              title={hidden.dmiAdx ? "Mostrar" : "Ocultar"}
+            >
+              {hidden.dmiAdx ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+            </button>
+            <button
+              onClick={() => setDmiAdxDialogOpen(true)}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+              aria-label="Configurar"
+              title="Configurar"
+            >
+              <Settings className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => removeIndicator("dmiAdx")}
+              className="rounded p-0.5 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-red"
+              aria-label="Eliminar"
+              title="Eliminar"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <DmiAdxSettingsDialog
+        open={dmiAdxDialogOpen}
+        onOpenChange={setDmiAdxDialogOpen}
       />
     </div>
   );

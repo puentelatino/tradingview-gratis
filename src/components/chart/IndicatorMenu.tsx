@@ -54,6 +54,11 @@ const ENTRIES: Entry[] = [
     group: "Momento",
     label: () => "Squeeze Momentum (LazyBear)",
   },
+  {
+    key: "dmiAdx",
+    group: "Momento",
+    label: () => "DMI + ADX (Key Level)",
+  },
 ];
 
 export function IndicatorMenu() {
