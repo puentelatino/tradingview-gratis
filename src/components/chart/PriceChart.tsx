@@ -186,10 +186,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
   koncordeConfigRef.current = koncordeConfig;
   const dmiAdxConfigRef = useRef(dmiAdxConfig);
   dmiAdxConfigRef.current = dmiAdxConfig;
-  // Espejo de si el Squeeze esta activo, para que updateDmiAdx (llamado tambien
-  // desde el closure del WS) decida el modo overlay sin closures obsoletos.
-  const squeezeActiveRef = useRef(indicators.squeezeMomentum);
-  squeezeActiveRef.current = indicators.squeezeMomentum;
+  // True cuando el DMI esta superpuesto en el pane del Squeeze con eje 'left'
+  // visible. Lo lee el interceptor de pinch para bloquear tambien la franja
+  // del eje izquierdo en movil.
+  const dmiOverlayLeftRef = useRef(false);
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -448,7 +448,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const chartAreaRight = rect.width - rightAxisW;
       const chartAreaBottom = rect.height - timeAxisH;
       // Sobre el eje de precio derecho o el eje de tiempo inferior
-      return x >= chartAreaRight || y >= chartAreaBottom;
+      if (x >= chartAreaRight || y >= chartAreaBottom) return true;
+      // Cuando el DMI esta superpuesto, hay un eje izquierdo (en el pane del
+      // Squeeze) que tambien hay que tratar como eje: bloquear pinch sobre el.
+      // El ancho se lee de la price scale de la serie del DMI (escala 'left').
+      if (dmiOverlayLeftRef.current) {
+        let leftAxisW = 0;
+        try {
+          leftAxisW = dmiAdxAdxRef.current?.priceScale().width() ?? 0;
+        } catch {}
+        if (leftAxisW > 0 && x <= leftAxisW) return true;
+      }
+      return false;
     }
 
     function onTouchStart(e: TouchEvent) {
@@ -812,6 +823,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (!chartRef.current) return;
 
     function teardownDmi() {
+      // Si el DMI tenia el eje izquierdo visible (overlay), lo ocultamos antes
+      // de destruir las series para no dejar un eje 'left' huerfano en el pane
+      // del Squeeze.
+      if (dmiOverlayLeftRef.current) {
+        try {
+          dmiAdxAdxRef.current?.priceScale().applyOptions({ visible: false });
+        } catch {}
+        dmiOverlayLeftRef.current = false;
+      }
       const remove = (s: ISeriesApi<"Line"> | null) => {
         if (s) chartRef.current!.removeSeries(s);
       };
@@ -833,14 +853,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
 
     // Ubicacion deseada. Si overlayOn === 'squeeze' Y el Squeeze esta activo,
-    // compartimos su pane (1 + rsi + macd) Y su misma price scale (la 'right'
-    // por defecto del pane, que usa el histograma del Squeeze). Compartir la
-    // escala garantiza que el cero del DMI coincida con el cero del Squeeze;
-    // el offset por keyLevel (en updateDmiAdx) hace que el Key Level caiga en
-    // ese cero comun. Si no hay overlay, pane propio dinamico.
+    // compartimos su pane (1 + rsi + macd) pero con una escala PROPIA a la
+    // IZQUIERDA ('left'), independiente y ajustable; el Squeeze conserva la
+    // 'right'. Asi cada indicador se escala arrastrando su eje, sin offset.
+    // Si no hay overlay, pane propio dinamico con la escala 'right' normal.
     const overlay =
       dmiAdxConfigRef.current.overlayOn === "squeeze" && indicators.squeezeMomentum;
     let paneIndex: number;
+    const scaleId = overlay ? "left" : undefined; // undefined → 'right' por defecto
     if (overlay) {
       paneIndex = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
     } else {
@@ -851,10 +871,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         (indicators.squeezeMomentum ? 1 : 0) +
         (indicators.koncorde ? 1 : 0);
     }
-    // Misma escala por defecto ('right') en ambos modos; lo que cambia es el
-    // pane. Incluimos 'overlay' en la clave para forzar reconstruccion cuando
-    // se entra/sale del modo compartido (cambia el offset de los datos).
-    const placementKey = `${paneIndex}:${overlay ? "shared" : "own"}`;
+    const placementKey = `${paneIndex}:${scaleId ?? "right"}`;
 
     // Si ya esta en la ubicacion correcta, nada que hacer (los colores/datos
     // los gestionan otros effects).
@@ -867,9 +884,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (dmiAdxAdxRef.current) teardownDmi();
 
     const cfg = dmiAdxConfigRef.current;
-    // En overlay omitimos priceScaleId → usa la 'right' por defecto del pane,
-    // la misma del histograma del Squeeze (escala compartida). En pane propio
-    // tambien la 'right' por defecto, pero de su propio pane.
+    // En overlay las series van a la escala 'left' propia del pane del Squeeze;
+    // en pane propio omitimos priceScaleId → 'right' por defecto de su pane.
     const mkLine = (color: string, width: 1 | 2, dashed = false) =>
       chartRef.current!.addSeries(
         LineSeries,
@@ -879,21 +895,32 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineStyle: dashed ? 2 : 0, // 2 = Dashed
           priceLineVisible: false,
           lastValueVisible: false,
+          ...(scaleId ? { priceScaleId: scaleId } : {}),
         },
         paneIndex,
       );
 
-    // Orden de creacion: el Key Level se crea el ultimo → se dibuja por encima,
-    // asi la linea blanca queda visible sobre los puntos del cero del Squeeze.
+    // Orden de creacion: el Key Level se crea el ultimo → se dibuja por encima.
     dmiAdxAdxRef.current = mkLine(cfg.adxColor, 2);
     dmiAdxPlusRef.current = mkLine(cfg.plusDIColor, 1);
     dmiAdxMinusRef.current = mkLine(cfg.minusDIColor, 1);
     dmiAdxKeyRef.current = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
     dmiPlacementRef.current = placementKey;
 
-    // En pane propio ajustamos los stretch factors; en overlay no tocamos la
-    // escala del Squeeze (la compartimos tal cual).
-    if (!overlay) {
+    if (overlay) {
+      // Hacemos visible el eje 'left' SOLO en este pane (el del Squeeze) via la
+      // price scale de la serie. No tocamos leftPriceScale a nivel de chart, asi
+      // que el pane del precio y los de RSI/MACD/Koncorde no ganan eje izquierdo.
+      try {
+        dmiAdxAdxRef.current.priceScale().applyOptions({
+          visible: true,
+          borderColor: TV_COLORS.border,
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
+      } catch {}
+      dmiOverlayLeftRef.current = true;
+    } else {
+      dmiOverlayLeftRef.current = false;
       try {
         chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
         chartRef.current.panes()[0]?.setStretchFactor(3);
@@ -1323,27 +1350,21 @@ export function PriceChart({ symbol, timeframe }: Props) {
       diLength: cfg.diLength,
     });
 
-    // Modo overlay sobre el Squeeze: comparten la misma price scale. Para que
-    // el Key Level coincida con el cero del histograma del Squeeze, desplazamos
-    // todos los valores restando keyLevel, de modo que el Key Level se dibuje
-    // exactamente en 0 (= cero compartido del Squeeze). El offset es SOLO de
-    // render: la pill y lastValues siguen mostrando los valores reales.
-    const overlay =
-      cfg.overlayOn === "squeeze" && squeezeActiveRef.current;
-    const off = overlay ? cfg.keyLevel : 0;
-
+    // El DMI/ADX dibuja siempre sus valores REALES, sin offset. En modo overlay
+    // usa una escala 'left' propia (eje izquierdo del pane del Squeeze), asi
+    // que no necesita desplazarse para convivir con el histograma: cada uno
+    // tiene su escala y el usuario las ajusta arrastrando su eje.
     const adxData: { time: UTCTimestamp; value: number }[] = [];
     const plusData: { time: UTCTimestamp; value: number }[] = [];
     const minusData: { time: UTCTimestamp; value: number }[] = [];
     const keyData: { time: UTCTimestamp; value: number }[] = [];
     for (const p of pts) {
       const t = p.time as UTCTimestamp;
-      if (p.adx !== null) adxData.push({ time: t, value: p.adx - off });
-      if (p.plusDI !== null) plusData.push({ time: t, value: p.plusDI - off });
-      if (p.minusDI !== null) minusData.push({ time: t, value: p.minusDI - off });
-      // Key Level: constante. En overlay se dibuja en 0 (keyLevel - keyLevel),
-      // en modo propio en su valor real.
-      keyData.push({ time: t, value: cfg.keyLevel - off });
+      if (p.adx !== null) adxData.push({ time: t, value: p.adx });
+      if (p.plusDI !== null) plusData.push({ time: t, value: p.plusDI });
+      if (p.minusDI !== null) minusData.push({ time: t, value: p.minusDI });
+      // Key Level: linea horizontal constante en su valor real
+      keyData.push({ time: t, value: cfg.keyLevel });
     }
     dmiAdxAdxRef.current.setData(adxData);
     dmiAdxPlusRef.current?.setData(plusData);
