@@ -186,6 +186,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
   koncordeConfigRef.current = koncordeConfig;
   const dmiAdxConfigRef = useRef(dmiAdxConfig);
   dmiAdxConfigRef.current = dmiAdxConfig;
+  // Espejo de si el Squeeze esta activo, para que updateDmiAdx (llamado tambien
+  // desde el closure del WS) decida el modo overlay sin closures obsoletos.
+  const squeezeActiveRef = useRef(indicators.squeezeMomentum);
+  squeezeActiveRef.current = indicators.squeezeMomentum;
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -829,15 +833,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
 
     // Ubicacion deseada. Si overlayOn === 'squeeze' Y el Squeeze esta activo,
-    // compartimos su pane (1 + rsi + macd) con un priceScaleId propio ('dmi')
-    // para no aplastar la escala del histograma. Si no, pane propio dinamico.
+    // compartimos su pane (1 + rsi + macd) Y su misma price scale (la 'right'
+    // por defecto del pane, que usa el histograma del Squeeze). Compartir la
+    // escala garantiza que el cero del DMI coincida con el cero del Squeeze;
+    // el offset por keyLevel (en updateDmiAdx) hace que el Key Level caiga en
+    // ese cero comun. Si no hay overlay, pane propio dinamico.
     const overlay =
       dmiAdxConfigRef.current.overlayOn === "squeeze" && indicators.squeezeMomentum;
     let paneIndex: number;
-    let scaleId: string | undefined;
     if (overlay) {
       paneIndex = 1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
-      scaleId = "dmi";
     } else {
       paneIndex =
         1 +
@@ -845,9 +850,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
         (indicators.macd ? 1 : 0) +
         (indicators.squeezeMomentum ? 1 : 0) +
         (indicators.koncorde ? 1 : 0);
-      scaleId = undefined; // escala por defecto del pane propio
     }
-    const placementKey = `${paneIndex}:${scaleId ?? "right"}`;
+    // Misma escala por defecto ('right') en ambos modos; lo que cambia es el
+    // pane. Incluimos 'overlay' en la clave para forzar reconstruccion cuando
+    // se entra/sale del modo compartido (cambia el offset de los datos).
+    const placementKey = `${paneIndex}:${overlay ? "shared" : "own"}`;
 
     // Si ya esta en la ubicacion correcta, nada que hacer (los colores/datos
     // los gestionan otros effects).
@@ -860,6 +867,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (dmiAdxAdxRef.current) teardownDmi();
 
     const cfg = dmiAdxConfigRef.current;
+    // En overlay omitimos priceScaleId → usa la 'right' por defecto del pane,
+    // la misma del histograma del Squeeze (escala compartida). En pane propio
+    // tambien la 'right' por defecto, pero de su propio pane.
     const mkLine = (color: string, width: 1 | 2, dashed = false) =>
       chartRef.current!.addSeries(
         LineSeries,
@@ -869,26 +879,21 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineStyle: dashed ? 2 : 0, // 2 = Dashed
           priceLineVisible: false,
           lastValueVisible: false,
-          ...(scaleId ? { priceScaleId: scaleId } : {}),
         },
         paneIndex,
       );
 
+    // Orden de creacion: el Key Level se crea el ultimo → se dibuja por encima,
+    // asi la linea blanca queda visible sobre los puntos del cero del Squeeze.
     dmiAdxAdxRef.current = mkLine(cfg.adxColor, 2);
     dmiAdxPlusRef.current = mkLine(cfg.plusDIColor, 1);
     dmiAdxMinusRef.current = mkLine(cfg.minusDIColor, 1);
     dmiAdxKeyRef.current = mkLine(cfg.keyLevelColor, 1, cfg.keyLevelDashed);
     dmiPlacementRef.current = placementKey;
 
-    // Cuando comparte pane, la escala 'dmi' (0-100) necesita margenes propios
-    // para convivir con el histograma del Squeeze sin deformarse.
-    if (overlay) {
-      try {
-        dmiAdxAdxRef.current.priceScale().applyOptions({
-          scaleMargins: { top: 0.1, bottom: 0.1 },
-        });
-      } catch {}
-    } else {
+    // En pane propio ajustamos los stretch factors; en overlay no tocamos la
+    // escala del Squeeze (la compartimos tal cual).
+    if (!overlay) {
       try {
         chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
         chartRef.current.panes()[0]?.setStretchFactor(3);
@@ -1318,17 +1323,27 @@ export function PriceChart({ symbol, timeframe }: Props) {
       diLength: cfg.diLength,
     });
 
+    // Modo overlay sobre el Squeeze: comparten la misma price scale. Para que
+    // el Key Level coincida con el cero del histograma del Squeeze, desplazamos
+    // todos los valores restando keyLevel, de modo que el Key Level se dibuje
+    // exactamente en 0 (= cero compartido del Squeeze). El offset es SOLO de
+    // render: la pill y lastValues siguen mostrando los valores reales.
+    const overlay =
+      cfg.overlayOn === "squeeze" && squeezeActiveRef.current;
+    const off = overlay ? cfg.keyLevel : 0;
+
     const adxData: { time: UTCTimestamp; value: number }[] = [];
     const plusData: { time: UTCTimestamp; value: number }[] = [];
     const minusData: { time: UTCTimestamp; value: number }[] = [];
     const keyData: { time: UTCTimestamp; value: number }[] = [];
     for (const p of pts) {
       const t = p.time as UTCTimestamp;
-      if (p.adx !== null) adxData.push({ time: t, value: p.adx });
-      if (p.plusDI !== null) plusData.push({ time: t, value: p.plusDI });
-      if (p.minusDI !== null) minusData.push({ time: t, value: p.minusDI });
-      // Key Level: linea horizontal constante en cada vela
-      keyData.push({ time: t, value: cfg.keyLevel });
+      if (p.adx !== null) adxData.push({ time: t, value: p.adx - off });
+      if (p.plusDI !== null) plusData.push({ time: t, value: p.plusDI - off });
+      if (p.minusDI !== null) minusData.push({ time: t, value: p.minusDI - off });
+      // Key Level: constante. En overlay se dibuja en 0 (keyLevel - keyLevel),
+      // en modo propio en su valor real.
+      keyData.push({ time: t, value: cfg.keyLevel - off });
     }
     dmiAdxAdxRef.current.setData(adxData);
     dmiAdxPlusRef.current?.setData(plusData);
